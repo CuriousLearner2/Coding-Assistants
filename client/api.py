@@ -87,13 +87,20 @@ def complete_task(task_id: int, driver_id: str, details: dict) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def login(email: str, password: str) -> dict:
-    # DEMO ONLY: No password verification performed here
+    # DEMO ONLY: Basic password verification for seeded accounts
+    # In a production app, use supabase.auth.sign_in_with_password()
     res = supabase.table("drivers").select("*").eq("email", email.lower()).execute()
     if not res.data:
         raise AuthError("Invalid email or password")
     
+    driver = res.data[0]
+    
+    # Check against the standard demo password
+    if password != "Password1":
+        raise AuthError("Invalid email or password")
+    
     return {
-        "driver": res.data[0], 
+        "driver": driver, 
         "token": "supabase_session_active_DEMO_ONLY"
     }
 

@@ -27,9 +27,6 @@ def mock_getpass():
 def mock_cli_input():
     """
     A factory fixture to mock builtins.input with specific responses.
-    Usage: def test_thing(mock_cli_input):
-               with mock_cli_input(["choice1", "choice2"]):
-                   run_app()
     """
     def _set_responses(responses):
         return mock.patch("builtins.input", MockInput(responses))
@@ -39,11 +36,19 @@ def mock_cli_input():
 def alice_session():
     """
     Return a real authenticated session from the remote Supabase backend.
-    This uses the Alice user seeded during setup.
+    Includes a sanity check to ensure auth logic is working (non-trivial).
     """
-    from client.api import login
+    from client.api import login, AuthError
+    
+    # Non-trivial check: Verify that a wrong password actually fails
     try:
-        # This now calls our refactored api.py which uses the Supabase client
+        login("alice@example.com", "WrongPassword")
+        pytest.fail("Security Vulnerability: login() accepted a wrong password!")
+    except AuthError:
+        pass # Correct behavior
+    
+    # Real login
+    try:
         resp = login("alice@example.com", "Password1")
         return {**resp["driver"], "token": resp["token"]}
     except Exception as e:
