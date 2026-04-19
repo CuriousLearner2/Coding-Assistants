@@ -22,7 +22,8 @@ if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_KEY]):
 # Init Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-pro')
+# Use gemini-2.5-flash for the best balance of speed and intelligence in V1
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # ── Gemini Extraction Logic ───────────────────────────────────────────────────
 
