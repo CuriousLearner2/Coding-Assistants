@@ -221,28 +221,54 @@ serve(async (req) => {
     }
     else if (session.state === "AWAITING_WINDOW") {
       const window = await extractWindowWithGemini(text)
-      const taskData = {
-        encrypted_id: `wa_${phone.slice(-4)}_${crypto.randomUUID().split('-')[0]}`,
-        date: window.date,
-        start_time: "09:00",
-        end_time: window.end_time,
-        donor_name: `WhatsApp Donor (${phone.slice(-4)})`,
-        address_json: { street: "Unknown (WA Lead)", city: "SF", state: "CA", zip: "94105" },
-        lat: 37.7749,
-        lon: -122.4194,
-        food_description: session.temp_data.food_description,
-        category: session.temp_data.category,
-        quantity_lb: session.temp_data.quantity_lb,
-        requires_review: session.temp_data.requires_review || false,
-        donor_whatsapp_id: phone,
-        status: "available"
+      const newData = { ...session.temp_data, ...window }
+      
+      await supabase.table("whatsapp_sessions").update({
+        state: "AWAITING_WINDOW_REVIEW",
+        temp_data: newData
+      }).eq("phone_number", phone)
+
+      await sendWhatsApp(phone, `Got it! I've scheduled the pickup for:\n\n📅 *Date:* ${window.date}\n🕒 *Latest Pickup:* ${window.end_time}\n\nDoes this work? (Reply 'Yes' or tell me what to change)`)
+    }
+    else if (session.state === "AWAITING_WINDOW_REVIEW") {
+      if (msgUpper === "YES" || msgUpper === "Y" || msgUpper === "OK") {
+        const taskData = {
+          encrypted_id: `wa_${phone.slice(-4)}_${crypto.randomUUID().split('-')[0]}`,
+          date: session.temp_data.date,
+          start_time: "09:00",
+          end_time: session.temp_data.end_time,
+          donor_name: `WhatsApp Donor (${phone.slice(-4)})`,
+          address_json: { street: "Unknown (WA Lead)", city: "SF", state: "CA", zip: "94105" },
+          lat: 37.7749,
+          lon: -122.4194,
+          food_description: session.temp_data.food_description,
+          category: session.temp_data.category,
+          quantity_lb: session.temp_data.quantity_lb,
+          requires_review: session.temp_data.requires_review || false,
+          donor_whatsapp_id: phone,
+          status: "available"
+        }
+
+        const { error: insertError } = await supabase.table("tasks").insert(taskData)
+        if (insertError) throw insertError
+
+        await supabase.table("whatsapp_sessions").update({ state: "COMPLETED" }).eq("phone_number", phone)
+        await sendWhatsApp(phone, `✅ Success! Your donation is live for ${session.temp_data.date} until ${session.temp_data.end_time}. A volunteer will be notified. Thank you! 🥕`)
+      } else {
+        const today = new Date().toISOString().split('T')[0]
+        const prompt = `Today is ${today}. Current window: ${session.temp_data.date} ${session.temp_data.end_time}. Update based on: "${text}". Return JSON: {"date": "YYYY-MM-DD", "end_time": "HH:MM"}`
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        })
+        const data = await res.json()
+        const updated = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, "").trim())
+        const newData = { ...session.temp_data, ...updated }
+        
+        await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
+        await sendWhatsApp(phone, `Updated! How about now?\n\n📅 *Date:* ${newData.date}\n🕒 *Latest Pickup:* ${newData.end_time}\n\nReply 'Yes' to confirm or tell me what else to change.`)
       }
-
-      const { error: insertError } = await supabase.table("tasks").insert(taskData)
-      if (insertError) throw insertError
-
-      await supabase.table("whatsapp_sessions").update({ state: "COMPLETED" }).eq("phone_number", phone)
-      await sendWhatsApp(phone, `✅ Success! Your donation is live for ${window.date} until ${window.end_time}. A volunteer will be notified. Thank you! 🥕`)
     }
     else if (session.state === "COMPLETED") {
       await sendWhatsApp(phone, "Your donation is logged. Type 'NEW' to report more surplus food!")

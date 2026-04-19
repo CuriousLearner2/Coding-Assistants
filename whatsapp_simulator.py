@@ -200,32 +200,73 @@ def handle_message(phone: str, message: str):
         # Final Turn: Parse Date/Time
         print(f"  [AI] Parsing window: '{message}'...")
         window = extract_window_details(message)
+        temp_data.update(window) # Store date and end_time
         
-        # 4. Inject Task into Supabase
-        task_data = {
-            "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
-            "date": window.get("date"),
-            "start_time": "09:00",
-            "end_time": window.get("end_time"),
-            "donor_name": f"WhatsApp Donor ({phone[-4:]})",
-            "address_json": {"street": "Unknown (WA Lead)", "city": "SF", "state": "CA", "zip": "94105"},
-            "lat": 37.7749, "lon": -122.4194,
-            "food_description": temp_data.get("food_description"),
-            "category": temp_data.get("category"),
-            "quantity_lb": float(temp_data.get("quantity_lb", 0)),
-            "requires_review": temp_data.get("requires_review", False),
-            "donor_whatsapp_id": phone,
-            "status": "available"
-        }
-        
-        supabase.table("tasks").insert(task_data).execute()
-        
-        # 5. Complete Session
         supabase.table("whatsapp_sessions").update({
-            "state": "COMPLETED"
+            "state": "AWAITING_WINDOW_REVIEW",
+            "temp_data": temp_data
         }).eq("phone_number", phone).execute()
         
-        return f"✅ Success! Your donation is live for {window.get('date')} until {window.get('end_time')}. A volunteer will be notified. Thank you! 🥕"
+        return (
+            f"Got it! I've scheduled the pickup for:\n\n"
+            f"📅 *Date:* {window.get('date')}\n"
+            f"🕒 *Latest Pickup:* {window.get('end_time')}\n\n"
+            f"Does this work? (Reply 'Yes' or tell me what to change)"
+        )
+
+    if state == "AWAITING_WINDOW_REVIEW":
+        if msg_upper in ["YES", "Y", "OK", "LOOKS GOOD", "CORRECT"]:
+            # 4. Inject Task into Supabase
+            task_data = {
+                "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
+                "date": temp_data.get("date"),
+                "start_time": "09:00",
+                "end_time": temp_data.get("end_time"),
+                "donor_name": f"WhatsApp Donor ({phone[-4:]})",
+                "address_json": {"street": "Unknown (WA Lead)", "city": "SF", "state": "CA", "zip": "94105"},
+                "lat": 37.7749, "lon": -122.4194,
+                "food_description": temp_data.get("food_description"),
+                "category": temp_data.get("category"),
+                "quantity_lb": float(temp_data.get("quantity_lb", 0)),
+                "requires_review": temp_data.get("requires_review", False),
+                "donor_whatsapp_id": phone,
+                "status": "available"
+            }
+            supabase.table("tasks").insert(task_data).execute()
+            
+            # 5. Complete Session
+            supabase.table("whatsapp_sessions").update({
+                "state": "COMPLETED"
+            }).eq("phone_number", phone).execute()
+            
+            return f"✅ Success! Your donation is live for {temp_data.get('date')} until {temp_data.get('end_time')}. A volunteer will be notified. Thank you! 🥕"
+
+        # User is correcting the window
+        print(f"  [AI] Updating window based on correction: '{message}'...")
+        today = date.today().isoformat()
+        prompt = f"Today is {today}. The current window is {temp_data.get('date')} {temp_data.get('end_time')}. Update it based on: \"{message}\". Return JSON: {{\"date\": \"YYYY-MM-DD\", \"end_time\": \"HH:MM\"}}"
+        try:
+            response = client.models.generate_content(
+                model='gemini-flash-latest',
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type='application/json'),
+            )
+            updated = json.loads(response.text)
+            temp_data.update(updated)
+            
+            supabase.table("whatsapp_sessions").update({
+                "temp_data": temp_data
+            }).eq("phone_number", phone).execute()
+            
+            return (
+                f"Updated! How about now?\n\n"
+                f"📅 *Date:* {temp_data.get('date')}\n"
+                f"🕒 *Latest Pickup:* {temp_data.get('end_time')}\n\n"
+                f"Reply 'Yes' to confirm or tell me what else to change."
+            )
+        except Exception as e:
+            print(f"  [WINDOW CORRECTION ERROR] {e}")
+            return "Sorry, I didn't quite catch that. Is the new time okay? (Reply 'Yes' or try again)"
 
     if state == "COMPLETED":
         return "Your previous donation was logged. Type 'NEW' to report more surplus food!"
