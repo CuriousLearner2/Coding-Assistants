@@ -59,7 +59,7 @@ def _call_gemini_api(text: str):
     prompt = f"JSON only: {{\"category\": \"One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]\", \"quantity_lb\": number, \"food_description\": \"clean summary\"}}. Input: \"{text}\""
     
     response = client.models.generate_content(
-        model='gemini-1.5-flash',
+        model='gemini-2.0-flash',
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type='application/json',
@@ -159,7 +159,7 @@ def run_simulator():
     print("═" * 50)
     print("  REPLATE WHATSAPP SIMULATOR (V1)")
     print(f"  Testing with Phone: {args.phone}")
-    print(f"  Using Model: {'MOCK' if MOCK_AI else 'gemini-1.5-flash'}")
+    print(f"  Using Model: {'MOCK' if MOCK_AI else 'gemini-2.0-flash'}")
     print("  Commands: 'RESET' to start over, 'STOP' to delete, 'EXIT' to quit.")
     print("═" * 50)
     
