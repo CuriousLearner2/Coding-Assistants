@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import argparse
+from datetime import date
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import google.generativeai as genai
@@ -10,7 +12,7 @@ load_dotenv()
 
 # Config
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") # Use admin key for simulator
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 
 if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_KEY]):
@@ -37,7 +39,6 @@ def extract_donation_details(text: str):
     """
     try:
         response = model.generate_content(prompt)
-        # Handle potential markdown in response
         raw_json = response.text.strip().replace('```json', '').replace('```', '')
         return json.loads(raw_json)
     except Exception as e:
@@ -52,16 +53,24 @@ def extract_donation_details(text: str):
 # ── State Machine Logic ────────────────────────────────────────────────────────
 
 def handle_message(phone: str, message: str):
-    # 1. Get or Create Session
+    msg_upper = message.upper().strip()
+
+    # 1. Handle Termination Commands
+    if msg_upper in ["STOP", "CANCEL"]:
+        supabase.table("whatsapp_sessions").delete().eq("phone_number", phone).execute()
+        return "🛑 Session cancelled and deleted. Send 'NEW' to start again anytime."
+
+    # 2. Get or Create Session
     res = supabase.table("whatsapp_sessions").select("*").eq("phone_number", phone).execute()
     session = res.data[0] if res.data else None
     
-    if not session or message.upper() in ["RESET", "NEW", "START"]:
+    # 3. Handle Reset / Initial Greet
+    if not session or msg_upper in ["RESET", "NEW", "START"]:
         supabase.table("whatsapp_sessions").upsert({
             "phone_number": phone,
             "state": "AWAITING_DESC",
-            "temp_data": {},
-            "updated_at": "now()"
+            "temp_data": {}
+            # Omit updated_at to let DB handle it
         }).execute()
         return "👋 Hi from Replate! We're ready to help you rescue that food. \n\nWhat kind of food do you have today? (e.g. '3 trays of pasta')"
 
@@ -75,8 +84,7 @@ def handle_message(phone: str, message: str):
         
         supabase.table("whatsapp_sessions").update({
             "state": "AWAITING_WINDOW",
-            "temp_data": temp_data,
-            "updated_at": "now()"
+            "temp_data": temp_data
         }).eq("phone_number", phone).execute()
         
         return f"Got it! {details.get('food_description')} ({details.get('category')}). \n\nWhen is the latest we can pick this up? (e.g. 'Until 5pm today')"
@@ -85,10 +93,10 @@ def handle_message(phone: str, message: str):
         # Final Turn
         temp_data["pickup_window"] = message
         
-        # 2. Inject Task into Supabase
+        # 4. Inject Task into Supabase
         task_data = {
             "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
-            "date": "2026-04-18", # In prod, parse date from window
+            "date": date.today().isoformat(), # Use current date
             "start_time": "12:00",
             "end_time": "17:00",
             "donor_name": f"WhatsApp Donor ({phone[-4:]})",
@@ -97,16 +105,16 @@ def handle_message(phone: str, message: str):
             "food_description": temp_data.get("food_description"),
             "category": temp_data.get("category"),
             "quantity_lb": temp_data.get("quantity_lb"),
+            "requires_review": temp_data.get("requires_review", False), # Propagate review flag
             "donor_whatsapp_id": phone,
             "status": "available"
         }
         
         supabase.table("tasks").insert(task_data).execute()
         
-        # 3. Complete Session
+        # 5. Complete Session
         supabase.table("whatsapp_sessions").update({
-            "state": "COMPLETED",
-            "updated_at": "now()"
+            "state": "COMPLETED"
         }).eq("phone_number", phone).execute()
         
         return "✅ Success! Your donation is now live in our system. A volunteer will be notified shortly. Thank you! 🥕"
@@ -117,13 +125,15 @@ def handle_message(phone: str, message: str):
 # ── Main Simulator Loop ────────────────────────────────────────────────────────
 
 def run_simulator():
+    parser = argparse.ArgumentParser(description="Replate WhatsApp Simulator")
+    parser.add_argument("--phone", default="+14155550000", help="Donor phone number for testing concurrent sessions")
+    args = parser.parse_args()
+
     print("═" * 50)
     print("  REPLATE WHATSAPP SIMULATOR (V1)")
-    print("  Type your messages below to test the bot.")
-    print("  Commands: 'RESET' to start over, 'EXIT' to quit.")
+    print(f"  Testing with Phone: {args.phone}")
+    print("  Commands: 'RESET' to start over, 'STOP' to delete, 'EXIT' to quit.")
     print("═" * 50)
-    
-    phone = "+14155550000" # Mock donor phone
     
     while True:
         try:
@@ -131,7 +141,7 @@ def run_simulator():
             if msg.upper() == "EXIT": break
             if not msg: continue
             
-            response = handle_message(phone, msg)
+            response = handle_message(args.phone, msg)
             print(f"\n[Bot]: {response}")
         except KeyboardInterrupt:
             break
