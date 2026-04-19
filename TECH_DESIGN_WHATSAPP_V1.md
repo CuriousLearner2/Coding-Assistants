@@ -34,7 +34,14 @@ This document details the technical implementation of the automated food donatio
 |-------|------------|-----------|--------------|
 | `START` | "I have food" | None | "Thanks! What kind of food do you have?" |
 | `AWAITING_DESC` | "3 trays of pasta" | Extract Category & Qty | "Got it. When is the latest we can pick this up?" |
-| `AWAITING_WINDOW` | "Until 5pm today" | Parse Time | "Confirmed! A volunteer will be notified." |
+| `AWAITING_WINDOW` | "Until 5pm today" | Parse Time & Inject Task | "Confirmed! A volunteer will be notified." |
+| `COMPLETED` | Any text | None | "Your donation is logged. Type 'NEW' to start another." |
+
+### 4.1 Special Commands & Unexpected Input
+* **"RESET" / "NEW":** Immediately resets the session state to `START` and clears `temp_data`.
+* **"STOP" / "CANCEL":** Deletes the row from `whatsapp_sessions` and stops the flow.
+* **Media/Images:** If an image is sent during `AWAITING_DESC`, the bot replies: *"I can't see images yet! Please type a short description of the food."* (Native photo support deferred to V2).
+* **Gibberish/Unknown:** If the LLM extraction in `AWAITING_DESC` returns a confidence score below a threshold, the bot asks the user to clarify instead of advancing the state.
 
 ## 5. Intelligence Strategy (Gemini Pro)
 
