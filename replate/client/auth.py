@@ -35,7 +35,7 @@ def run_login() -> dict | None:
         return None
 
     try:
-        resp = api.login(email, password)
+        resp = api.post("/api/drivers/login", json={"email": email, "password": password})
     except api.AuthError:
         d.error("Invalid email or password.")
         return None
@@ -74,7 +74,7 @@ def run_signup() -> dict | None:
         return None
 
     try:
-        resp = api.signup({
+        resp = api.post("/api/drivers", json={
             "first_name": first,
             "last_name": last,
             "phone": phone,
@@ -97,9 +97,60 @@ def run_signup() -> dict | None:
 
 def run_forgot_password():
     d.header("REPLATE — Reset Password")
-    d.info("Note: Supabase reset is not simulated in this demo.")
-    d.info("In a real app, this would use supabase.auth.reset_password_for_email.")
-    input("  Press Enter to return...")
+    try:
+        email = input("  Enter your account email: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        return
+
+    try:
+        validate_email(email)
+    except ValueError as e:
+        d.error(str(e))
+        return
+
+    try:
+        resp = api.post("/api/drivers/password", json={"email": email})
+    except api.NotFoundError:
+        d.error("No account found for that email.")
+        return
+    except api.ApiError as e:
+        d.error(str(e))
+        return
+
+    # In production the token would arrive by email; for the CLI/dummy backend we show it
+    reset_token = resp.get("reset_token", "")
+    if reset_token:
+        d.info(f"[DEV] Reset token: {reset_token}")
+
+    try:
+        token = input("  Enter reset token: ").strip()
+        new_pass = getpass.getpass("  New password: ")
+        confirm = getpass.getpass("  Confirm new password: ")
+    except (KeyboardInterrupt, EOFError):
+        return
+
+    try:
+        validate_password(new_pass, "New password")
+        if new_pass != confirm:
+            raise ValueError("Passwords do not match")
+    except ValueError as e:
+        d.error(str(e))
+        return
+
+    try:
+        api.patch("/api/drivers/password", json={
+            "email": email,
+            "reset_token": token,
+            "password": new_pass,
+        })
+    except api.ValidationError as e:
+        d.error(e.errors[0])
+        return
+    except api.ApiError as e:
+        d.error(str(e))
+        return
+
+    d.success("Password updated. Please log in with your new password.")
 
 
 # ── Landing menu ───────────────────────────────────────────────────────────────

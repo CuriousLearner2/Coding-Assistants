@@ -1,58 +1,100 @@
+import os
+
 import client.api as api
 from client import display as d
+from client.validation import validate_weight
+
+
+def _upload_photo(path: str) -> str | None:
+    """Validate the local path and return a mock storage URL."""
+    path = path.strip()
+    if not path:
+        return None
+    if not os.path.isfile(path):
+        raise ValueError(f"File not found: {path}")
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"):
+        raise ValueError("Unsupported file type. Use JPG, PNG, or HEIC.")
+    # Dummy backend: return a mock URL instead of actually uploading
+    filename = os.path.basename(path)
+    return f"https://storage.replate.org/mock/{filename}"
 
 
 def run_donation(task: dict, session: dict):
-    """Guide the driver through completing a pick-up."""
-    d.header(f"Log Donation — {task['donor_name']}")
+    d.header(f"Log Completion — {task['donor_name']}")
+    d.blank()
+    d.info(f"Date:  {d.fmt_date(task['date'])}")
+    d.info(f"Time:  {d.fmt_time_range(task.get('start_time'), task.get('end_time'))}")
     d.blank()
 
-    choice = d.menu(["Complete this pick-up", "Mark as missed (could not pick up)"], back_label="Cancel")
+    choice = d.menu(["Complete this pick-up", "Mark as missed"], back_label="Back")
+
     if choice == "b":
         return
 
     if choice == "2":
-        if d.confirm("Are you sure you want to mark this as missed?"):
-            try:
-                api.complete_task(task["id"], session["id"], {"outcome": "missed"})
-                d.success("Task marked as missed.")
-            except api.ApiError as e:
-                d.error(str(e))
+        if d.confirm("Mark this pick-up as missed?"):
+            _submit(task, session, outcome="missed")
         return
 
-    # Success path
+    if choice != "1":
+        d.error("Invalid choice.")
+        return
+
+    # Completion flow
+    d.blank()
+    d.info("Enter donation details:")
+    d.blank()
+
+    # Weight
     try:
-        weight_str = input("  Enter total weight (lbs): ").strip()
-        weight = float(weight_str)
-    except (ValueError, KeyboardInterrupt, EOFError):
-        d.error("Invalid weight.")
+        weight_str = input("  Donation weight (lbs): ").strip()
+        weight = validate_weight(weight_str)
+    except (ValueError, KeyboardInterrupt, EOFError) as e:
+        d.error(str(e) if isinstance(e, ValueError) else "Cancelled.")
         return
 
-    # In our Supabase demo, we'll just use the driver's default partner_id
-    # or let them select if we had more logic. For now, keep it simple.
-    partners = api.get_partners()
-    partner_names = [p["name"] for p in partners]
-    
-    d.info("Where are you delivering this donation?")
-    idx = d.choose("Select NPO partner", partner_names)
+    # NPO selection
+    try:
+        partners = api.get("/api/partners", token=session["token"])
+    except api.ApiError as e:
+        d.error(str(e))
+        return
+
+    d.blank()
+    d.info("Recipient NPO:")
+    names = [p["name"] for p in partners]
+    idx = d.choose("Select NPO", names)
     if idx is None:
         return
-    
-    partner = partners[idx]
+    chosen_partner = partners[idx]
 
-    d.info("Photo confirmation required.")
-    input("  [Press Enter to simulate taking a photo] ")
-    
-    # Simulate a photo URL
-    photo_url = f"https://storage.replate.org/mock/task_{task['id']}.jpg"
-
+    # Photo (optional)
+    d.blank()
     try:
-        api.complete_task(task["id"], session["id"], {
-            "outcome": "completed",
-            "weight": weight,
-            "partner_id": partner["id"],
-            "photo_url": photo_url
-        })
-        d.success("Donation logged! Thank you for your service.")
+        photo_path = input("  Photo path (optional, press Enter to skip): ").strip()
+        photo_url = _upload_photo(photo_path) if photo_path else None
+    except ValueError as e:
+        d.error(str(e))
+        return
+
+    _submit(task, session, outcome="completed", weight=weight,
+            partner_id=chosen_partner["id"], photo_url=photo_url)
+
+
+def _submit(task: dict, session: dict, outcome: str, **details):
+    payload = {"outcome": outcome, **details}
+    try:
+        api.patch(
+            f"/api/tasks/{task['id']}/update_completion_details",
+            token=session["token"],
+            json=payload,
+        )
+        if outcome == "missed":
+            d.success("Pick-up marked as missed.")
+        else:
+            d.success("Pick-up logged as completed. Thank you!")
+    except api.ConflictError:
+        d.error("This task has already been finalized.")
     except api.ApiError as e:
         d.error(str(e))

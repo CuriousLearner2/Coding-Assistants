@@ -1,12 +1,48 @@
 #!/usr/bin/env python3
-"""Replate CLI — food rescue volunteer driver app (Supabase Edition)."""
+"""Replate CLI — food rescue volunteer driver app."""
 
 import os
 import sys
+import threading
+import time
+
+import requests
+
+# ── Backend startup ────────────────────────────────────────────────────────────
+
+def _start_backend():
+    """Start the dummy Flask backend in a background daemon thread."""
+    os.environ.setdefault("REPLATE_API_URL", "http://localhost:5001")
+    from dummy_backend.server import app
+    thread = threading.Thread(
+        target=lambda: app.run(port=5001, debug=False, use_reloader=False),
+        daemon=True,
+    )
+    thread.start()
+
+
+def _wait_for_backend(retries: int = 10, delay: float = 0.3) -> bool:
+    url = os.getenv("REPLATE_API_URL", "http://localhost:5001")
+    for _ in range(retries):
+        try:
+            requests.get(f"{url}/health", timeout=1)
+            return True
+        except Exception:
+            time.sleep(delay)
+    return False
+
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    # Allow connecting to an external backend by setting REPLATE_API_URL
+    external = os.getenv("REPLATE_API_URL")
+    if not external:
+        _start_backend()
+        if not _wait_for_backend():
+            print("Error: backend failed to start.")
+            return 1
+
     from client.auth import run_auth_menu, logout
     from client.onboarding import run_onboarding
     from client.available_tasks import run_available_tasks

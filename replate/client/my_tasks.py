@@ -3,51 +3,59 @@ from client import display as d
 from client.donation import run_donation
 
 
+_IN_PROGRESS = {"available", "claimed"}
+_HISTORY = {"completed", "missed"}
+
+
 def _task_summary(task: dict) -> str:
     time_range = d.fmt_time_range(task.get("start_time"), task.get("end_time"))
-    addr = d.fmt_address(task.get("address_json", {}))
-    return f"{task['donor_name']:<28}  {time_range}\n     {addr}"
+    addr = d.fmt_address(task.get("address", {}))
+    status_badge = f"[{task['status'].upper()}]" if task["status"] in _HISTORY else ""
+    line = f"{task['donor_name']:<28}  {time_range}  {status_badge}"
+    return f"{line}\n     {d.fmt_date(task['date'])} · {addr}"
 
 
 def run_my_tasks(session: dict):
-    view = "claimed"  # 'claimed' (in progress) or 'completed/missed' (history)
+    view = "in_progress"
 
     while True:
-        view_label = "In Progress" if view == "claimed" else "History"
-        d.header(f"REPLATE — My Tasks ({view_label})")
+        d.header(f"REPLATE — My Tasks ({'In Progress' if view == 'in_progress' else 'History'})")
         d.blank()
 
         try:
-            all_tasks = api.get_my_tasks(session["id"])
-            if view == "claimed":
-                tasks = [t for t in all_tasks if t["status"] == "claimed"]
-            else:
-                tasks = [t for t in all_tasks if t["status"] in ("completed", "missed")]
+            all_tasks = api.get("/api/my_tasks", token=session["token"])
         except api.ApiError as e:
             d.error(str(e))
             return
 
+        tasks = (
+            [t for t in all_tasks if t["status"] in _IN_PROGRESS]
+            if view == "in_progress"
+            else [t for t in all_tasks if t["status"] in _HISTORY]
+        )
+        tasks.sort(key=lambda t: t.get("date", ""))
+
         if not tasks:
-            d.info(f"No tasks in {view_label.lower()}.")
+            d.info("No tasks here yet.")
         else:
             for i, task in enumerate(tasks, 1):
                 print(f"  {i:>2}. {_task_summary(task)}")
                 d.blank()
 
         d.divider()
-        options = ["Switch to History" if view == "claimed" else "Switch to In Progress"]
-        if tasks and view == "claimed":
-            options.append("Complete a pick-up")
-
+        toggle_label = "Switch to History" if view == "in_progress" else "Switch to In Progress"
+        options = [toggle_label]
+        if tasks and view == "in_progress":
+            options.append("Log a completion / miss")
         choice = d.menu(options, back_label="Main menu")
 
         if choice == "b":
-            break
+            return
         elif choice == "1":
-            view = "completed" if view == "claimed" else "claimed"
-        elif choice == "2" and tasks and view == "claimed":
+            view = "history" if view == "in_progress" else "in_progress"
+        elif choice == "2" and tasks and view == "in_progress":
             labels = [task["donor_name"] for task in tasks]
-            idx = d.choose("Select a pick-up to log", labels)
+            idx = d.choose("Select a task", labels)
             if idx is not None:
                 run_donation(tasks[idx], session)
         else:

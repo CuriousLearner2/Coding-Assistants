@@ -12,7 +12,7 @@ def run_account(session: dict) -> str | None:
     partner_name = "Not set"
     if session.get("partner_id"):
         try:
-            partners = api.get_partners()
+            partners = api.get("/api/partners", token=session["token"])
             match = next((p for p in partners if p["id"] == session["partner_id"]), None)
             if match:
                 partner_name = match["name"]

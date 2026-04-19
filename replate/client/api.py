@@ -1,18 +1,12 @@
 import os
-from typing import Any, List, Optional
-from dotenv import load_dotenv
-from supabase import create_client, Client
+from typing import Any, Optional
 
-# Load environment variables from .env file
-load_dotenv()
+import requests as _requests
+from requests.exceptions import ConnectionError as _ConnError, Timeout as _Timeout
 
-URL: str = os.environ.get("SUPABASE_URL", "")
-KEY: str = os.environ.get("SUPABASE_ANON_KEY", "")
+BASE_URL = os.getenv("REPLATE_API_URL", "http://localhost:5001")
+TIMEOUT = 30
 
-if not URL or not KEY:
-    raise RuntimeError("SUPABASE_URL and SUPABASE_ANON_KEY must be set in .env")
-
-supabase: Client = create_client(URL, KEY)
 
 # ── Exceptions ─────────────────────────────────────────────────────────────────
 
@@ -21,86 +15,96 @@ class ApiError(Exception):
         super().__init__(message)
         self.status = status
 
+
 class AuthError(ApiError):
     pass
+
 
 class NotFoundError(ApiError):
     pass
 
+
 class ConflictError(ApiError):
     pass
+
 
 class ValidationError(ApiError):
     def __init__(self, message: str, errors: Optional[list] = None):
         super().__init__(message)
         self.errors = errors or [message]
 
-# ── Supabase Native Methods ────────────────────────────────────────────────────
 
-def get_partners() -> List[dict]:
-    res = supabase.table("partners").select("*").eq("active", True).execute()
-    return res.data
+# ── Sanitization ───────────────────────────────────────────────────────────────
 
-def get_available_tasks(date_str: str) -> List[dict]:
-    res = supabase.table("tasks").select("*").eq("date", date_str).eq("status", "available").execute()
-    return res.data
+def _sanitize(obj: Any) -> Any:
+    """Strip keys that could pollute object prototypes."""
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items() if not k.startswith("__")}
+    if isinstance(obj, list):
+        return [_sanitize(item) for item in obj]
+    return obj
 
-def get_my_tasks(driver_id: str) -> List[dict]:
-    res = supabase.table("tasks").select("*").eq("driver_id", driver_id).execute()
-    return res.data
 
-def claim_task(encrypted_id: str, driver_id: str) -> dict:
-    # First check if still available
-    check = supabase.table("tasks").select("status").eq("encrypted_id", encrypted_id).single().execute()
-    if check.data and check.data["status"] != "available":
-        raise ConflictError("Task already claimed")
-    
-    res = supabase.table("tasks").update({
-        "status": "claimed",
-        "driver_id": driver_id
-    }).eq("encrypted_id", encrypted_id).execute()
-    
-    if not res.data:
-        raise ApiError("Failed to claim task")
-    return res.data[0]
+# ── Core request wrapper ───────────────────────────────────────────────────────
 
-def complete_task(task_id: int, driver_id: str, details: dict) -> dict:
-    res = supabase.table("tasks").update({
-        "status": details.get("outcome", "completed"),
-        "completion_details": details
-    }).eq("id", task_id).eq("driver_id", driver_id).execute()
-    
-    if not res.data:
-        raise ApiError("Failed to complete task")
-    return res.data[0]
+def request(method: str, path: str, token: Optional[str] = None, **kwargs) -> Any:
+    headers = kwargs.pop("headers", {})
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
-def login(email: str, password: str) -> dict:
-    res = supabase.table("drivers").select("*").eq("email", email.lower()).execute()
-    if not res.data:
-        raise AuthError("Invalid email or password")
-    return {"driver": res.data[0], "token": "supabase_session_active"}
+    try:
+        resp = _requests.request(
+            method,
+            f"{BASE_URL}{path}",
+            headers=headers,
+            timeout=TIMEOUT,
+            **kwargs,
+        )
+    except _ConnError:
+        raise ApiError("Cannot connect to server. Is the backend running?")
+    except _Timeout:
+        raise ApiError("Request timed out. Please try again.")
 
-def signup(data: dict) -> dict:
-    # Remove password since we aren't using Supabase Auth for this demo simulation
-    clean_data = {k: v for k, v in data.items() if k != "password"}
-    res = supabase.table("drivers").insert(clean_data).execute()
-    if not res.data:
-        raise ValidationError("Signup failed")
-    return {"driver": res.data[0], "token": "supabase_session_active"}
+    if resp.status_code == 204:
+        return None
 
-def update_driver(driver_id: str, updates: dict) -> dict:
-    res = supabase.table("drivers").update(updates).eq("id", driver_id).execute()
-    if not res.data:
-        raise ApiError("Failed to update driver")
-    return res.data[0]
+    try:
+        data = resp.json()
+    except ValueError:
+        raise ApiError(f"Invalid response from server (status {resp.status_code})")
 
-# ── Old REST compatibility ─────────────────────────────────────────────────────
+    data = _sanitize(data)
 
-def post(path: str, json: dict = None, token: Optional[str] = None) -> Any:
-    if path == "/api/drivers/login": return login(json.get("email"), json.get("password"))
-    if path == "/api/drivers": return signup(json)
-    raise ApiError(f"POST {path} not implemented")
+    if resp.status_code == 401:
+        raise AuthError(data.get("error", "Authentication required"))
+    if resp.status_code == 403:
+        raise AuthError(data.get("error", "Access denied"))
+    if resp.status_code == 404:
+        raise NotFoundError(data.get("error", "Not found"))
+    if resp.status_code == 409:
+        raise ConflictError(data.get("error", "Conflict"))
+    if resp.status_code == 422:
+        raw = data.get("errors") or data.get("error") or "Validation failed"
+        errors = raw if isinstance(raw, list) else [raw]
+        raise ValidationError(errors[0], errors=errors)
+    if not resp.ok:
+        raise ApiError(
+            data.get("error", f"Server error ({resp.status_code})"),
+            status=resp.status_code,
+        )
 
-def get(path: str, **kwargs) -> Any:
-    if path == "/api/partners": return get_partners()
-    raise ApiError(f"GET {path} not implemented")
+    return data
+
+
+# ── Convenience methods ────────────────────────────────────────────────────────
+
+def get(path: str, token: Optional[str] = None, **kwargs) -> Any:
+    return request("GET", path, token=token, **kwargs)
+
+
+def post(path: str, token: Optional[str] = None, **kwargs) -> Any:
+    return request("POST", path, token=token, **kwargs)
+
+
+def patch(path: str, token: Optional[str] = None, **kwargs) -> Any:
+    return request("PATCH", path, token=token, **kwargs)

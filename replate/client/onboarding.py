@@ -1,42 +1,50 @@
 import client.api as api
 from client import display as d
+from client.session import save_session, update_session
 
 
 def run_onboarding(session: dict) -> dict | None:
-    """One-time setup for new drivers to choose their NPO partner."""
     d.header("REPLATE — Choose Your NPO Partner")
     d.blank()
-    d.info("Please select the organization you will be volunteering with.")
-    d.info("This can be changed later in your account settings.")
+    d.info("Select the nonprofit organization you'll be delivering to.")
     d.blank()
 
     try:
-        partners = api.get_partners()
+        partners = api.get("/api/partners", token=session["token"])
     except api.ApiError as e:
-        d.error(f"Could not fetch partners: {e}")
+        d.error(str(e))
         return None
 
     if not partners:
         d.error("No NPO partners are currently available. Contact Replate staff.")
         return None
 
-    names = [p["name"] for p in partners]
-    idx = d.choose("Select your NPO partner", names)
-    
-    if idx is None:
-        return None
+    while True:
+        search = input("  Search (or press Enter to list all): ").strip().lower()
+        filtered = [p for p in partners if search in p["name"].lower()] if search else partners
 
-    partner = partners[idx]
-    
-    try:
-        updated_driver = api.update_driver(session["id"], {"partner_id": partner["id"]})
-        d.success(f"Welcome aboard! You are now linked with {partner['name']}.")
-        
-        # Update local session
-        new_session = {**session, **updated_driver}
-        from client.session import save_session
-        save_session(new_session)
-        return new_session
-    except api.ApiError as e:
-        d.error(f"Failed to save choice: {e}")
-        return None
+        if not filtered:
+            d.info("No matches. Try a different term.")
+            continue
+
+        d.blank()
+        names = [p["name"] for p in filtered]
+        idx = d.choose("Select your NPO", names)
+        if idx is None:
+            return None
+
+        chosen = filtered[idx]
+        try:
+            updated = api.patch(
+                f"/api/drivers/{session['id']}",
+                token=session["token"],
+                json={"partner_id": chosen["id"]},
+            )
+        except api.ApiError as e:
+            d.error(str(e))
+            return None
+
+        session = {**session, **updated, "token": session["token"]}
+        save_session(session)
+        d.success(f"Partner set to: {chosen['name']}")
+        return session
