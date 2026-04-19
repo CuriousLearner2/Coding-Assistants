@@ -1,25 +1,50 @@
 import pytest
 from unittest import mock
 import os
+from dotenv import load_dotenv
 
 # Ensure we use the Supabase .env for tests
-from dotenv import load_dotenv
 load_dotenv()
 
-@pytest.fixture(autouse=True)
+class MockInput:
+    """A helper to simulate multiple terminal inputs for CLI testing."""
+    def __init__(self, responses):
+        self._responses = iter(responses)
+    def __call__(self, prompt=""):
+        try:
+            val = next(self._responses)
+            return val
+        except StopIteration:
+            return "b" # Default to 'back' to prevent infinite loops
+
+@pytest.fixture
 def mock_getpass():
+    """Globally mock password entry for all tests."""
     with mock.patch("getpass.getpass", return_value="Password1"):
         yield
 
-@pytest.fixture(autouse=True)
-def mock_input():
-    # We might need to mock input() if tests don't already handle it
-    # But integration tests usually call functions directly.
-    yield
+@pytest.fixture
+def mock_cli_input():
+    """
+    A factory fixture to mock builtins.input with specific responses.
+    Usage: def test_thing(mock_cli_input):
+               with mock_cli_input(["choice1", "choice2"]):
+                   run_app()
+    """
+    def _set_responses(responses):
+        return mock.patch("builtins.input", MockInput(responses))
+    return _set_responses
 
 @pytest.fixture
 def alice_session():
-    """Return a mock session for the pre-seeded driver Alice."""
+    """
+    Return a real authenticated session from the remote Supabase backend.
+    This uses the Alice user seeded during setup.
+    """
     from client.api import login
-    resp = login("alice@example.com", "Password1")
-    return {**resp["driver"], "token": resp["token"]}
+    try:
+        # This now calls our refactored api.py which uses the Supabase client
+        resp = login("alice@example.com", "Password1")
+        return {**resp["driver"], "token": resp["token"]}
+    except Exception as e:
+        pytest.fail(f"Failed to authenticate Alice against Supabase: {str(e)}")
