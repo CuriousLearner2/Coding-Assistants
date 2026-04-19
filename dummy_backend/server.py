@@ -178,8 +178,11 @@ def claim_task(encrypted_id):
         return jsonify({"error": "Not found"}), 404
     if task["status"] != "available":
         return jsonify({"error": "Task already claimed"}), 409
-    task["status"] = "claimed"
-    task["driver_id"] = g.driver_id
+    
+    task = store.update_task(task["id"], {
+        "status": "claimed",
+        "driver_id": g.driver_id
+    })
     return jsonify(task)
 
 
@@ -204,15 +207,18 @@ def complete_task(task_id):
     body = request.get_json(silent=True) or {}
     outcome = body.get("outcome", "completed")
 
+    updates = {}
     if outcome == "missed":
-        task["status"] = "missed"
+        updates["status"] = "missed"
     else:
-        task["status"] = "completed"
-        task["completion_details"] = {
+        updates["status"] = "completed"
+        updates["completion_details"] = {
             "weight": body.get("weight"),
             "partner_id": body.get("partner_id"),
             "photo_url": body.get("photo_url"),
         }
+    
+    task = store.update_task(task_id, updates)
     return jsonify(task)
 
 

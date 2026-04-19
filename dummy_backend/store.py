@@ -77,5 +77,11 @@ class Store:
     def get_tasks_for_driver(self, driver_id: int) -> list:
         return [t for t in self.tasks if t["driver_id"] == driver_id]
 
+    def update_task(self, task_id: int, updates: dict):
+        task = self.get_task_by_id(task_id)
+        if task:
+            task.update(updates)
+        return task
+
 
 store = Store()
