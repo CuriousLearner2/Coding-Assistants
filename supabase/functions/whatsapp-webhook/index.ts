@@ -246,7 +246,11 @@ serve(async (req) => {
     }
     else if (session.state === "AWAITING_WINDOW_REVIEW") {
       if (msgUpper === "YES" || msgUpper === "Y" || msgUpper === "OK") {
-        const cats = session.temp_data.categories.join(", ")
+        const allCats = session.temp_data.categories || ["Pantry"]
+        const mainCat = allCats[0]
+        const catString = allCats.join(", ")
+        const fullDesc = `[${catString}] ${session.temp_data.food_description}`
+
         const taskData = {
           encrypted_id: `wa_${phone.slice(-4)}_${crypto.randomUUID().split('-')[0]}`,
           date: session.temp_data.date,
@@ -256,13 +260,14 @@ serve(async (req) => {
           address_json: { street: "Unknown (WA Lead)", city: "SF", state: "CA", zip: "94105" },
           lat: 37.7749,
           lon: -122.4194,
-          food_description: session.temp_data.food_description,
-          category: cats,
+          food_description: fullDesc,
+          category: mainCat,
           quantity_lb: session.temp_data.quantity_lb,
           requires_review: session.temp_data.requires_review || false,
           donor_whatsapp_id: phone,
           status: "available"
         }
+
 
         const { error: insertError } = await supabase.table("tasks").insert(taskData)
         if (insertError) throw insertError

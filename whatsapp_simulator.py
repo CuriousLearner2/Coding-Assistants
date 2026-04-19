@@ -215,7 +215,14 @@ def handle_message(phone: str, message: str):
     if state == "AWAITING_WINDOW_REVIEW":
         if msg_upper in ["YES", "Y", "OK", "LOOKS GOOD", "CORRECT"]:
             # 4. Inject Task into Supabase
-            cats = ", ".join(temp_data.get("categories", ["Pantry"]))
+            # Use first category for the DB column to avoid check constraint violation,
+            # but keep the full list in the description.
+            all_cats = temp_data.get("categories", ["Pantry"])
+            main_cat = all_cats[0] if all_cats else "Pantry"
+            cat_string = ", ".join(all_cats)
+            
+            full_desc = f"[{cat_string}] {temp_data.get('food_description')}"
+            
             task_data = {
                 "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
                 "date": temp_data.get("date"),
@@ -224,8 +231,8 @@ def handle_message(phone: str, message: str):
                 "donor_name": f"WhatsApp Donor ({phone[-4:]})",
                 "address_json": {"street": "Unknown (WA Lead)", "city": "SF", "state": "CA", "zip": "94105"},
                 "lat": 37.7749, "lon": -122.4194,
-                "food_description": temp_data.get("food_description"),
-                "category": cats,
+                "food_description": full_desc,
+                "category": main_cat,
                 "quantity_lb": float(temp_data.get("quantity_lb", 0)),
                 "requires_review": temp_data.get("requires_review", False),
                 "donor_whatsapp_id": phone,
