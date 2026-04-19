@@ -10,7 +10,11 @@ CREATE TABLE IF NOT EXISTS whatsapp_sessions (
 
 -- 2. Add technical metadata to the Tasks table
 ALTER TABLE tasks 
-ADD COLUMN IF NOT EXISTS requires_review BOOLEAN DEFAULT false;
+ADD COLUMN IF NOT EXISTS requires_review BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now(),
+ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
 
 -- 3. Enable RLS (Security)
 ALTER TABLE whatsapp_sessions ENABLE ROW LEVEL SECURITY;

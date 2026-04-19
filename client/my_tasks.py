@@ -38,6 +38,7 @@ def run_my_tasks(session: dict):
         options = ["Switch to History" if view == "claimed" else "Switch to In Progress"]
         if tasks and view == "claimed":
             options.append("Complete a pick-up")
+            options.append("Release pick-up (unclaim)")
 
         choice = d.menu(options, back_label="Main menu")
 
@@ -50,5 +51,17 @@ def run_my_tasks(session: dict):
             idx = d.choose("Select a pick-up to log", labels)
             if idx is not None:
                 run_donation(tasks[idx], session)
+        elif choice == "3" and tasks and view == "claimed":
+            labels = [task["donor_name"] for task in tasks]
+            idx = d.choose("Select a pick-up to release", labels)
+            if idx is not None:
+                task = tasks[idx]
+                if d.confirm(f"Are you sure you want to release the pick-up from {task['donor_name']}?"):
+                    try:
+                        api.release_task(task["id"], session["id"])
+                        d.success("Pick-up released. It is now available for other drivers.")
+                        tasks.pop(idx)
+                    except api.ApiError as e:
+                        d.error(str(e))
         else:
             d.error("Invalid choice.")

@@ -51,25 +51,39 @@ def get_my_tasks(driver_id: str) -> List[dict]:
 
 def claim_task(encrypted_id: str, driver_id: str) -> dict:
     """
-    Claim a task atomically to prevent race conditions.
-    This uses a conditional update: only update if the status is 'available'.
+    Claim a task atomically and record the timestamp.
     """
     res = supabase.table("tasks").update({
         "status": "claimed",
-        "driver_id": driver_id
+        "driver_id": driver_id,
+        "claimed_at": "now()"
     }).eq("encrypted_id", encrypted_id).eq("status", "available").execute()
     
-    # If no rows were updated, it means the task was either not found 
-    # or was already claimed by someone else.
     if not res.data:
         raise ConflictError("Task is no longer available or already claimed.")
+    
+    return res.data[0]
+
+def release_task(task_id: int, driver_id: str) -> dict:
+    """
+    Release a claimed task back to the available pool.
+    """
+    res = supabase.table("tasks").update({
+        "status": "available",
+        "driver_id": None,
+        "released_at": "now()"
+    }).eq("id", task_id).eq("driver_id", driver_id).eq("status", "claimed").execute()
+    
+    if not res.data:
+        raise ApiError("Failed to release task. It may have been completed already.")
     
     return res.data[0]
 
 def complete_task(task_id: int, driver_id: str, details: dict) -> dict:
     res = supabase.table("tasks").update({
         "status": details.get("outcome", "completed"),
-        "completion_details": details
+        "completion_details": details,
+        "completed_at": "now()"
     }).eq("id", task_id).eq("driver_id", driver_id).execute()
     
     if not res.data:
