@@ -5,7 +5,8 @@ import argparse
 from datetime import date
 from dotenv import load_dotenv
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # Load environment
 load_dotenv()
@@ -21,27 +22,28 @@ if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_KEY]):
 
 # Init Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai.configure(api_key=GEMINI_KEY)
-# Use gemini-2.5-flash for the best balance of speed and intelligence in V1
-model = genai.GenerativeModel('gemini-2.5-flash')
+client = genai.Client(api_key=GEMINI_KEY)
 
 # ── Gemini Extraction Logic ───────────────────────────────────────────────────
 
 def extract_donation_details(text: str):
     prompt = f"""
-    You are a logistics coordinator for Replate, a food rescue nonprofit.
-    Extract the following from the user's food description:
-    1. Category: Exactly one of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]
-    2. Quantity_LB: A numeric estimate of the weight in pounds.
-    3. Food_Description: A clean, concise title for the donation.
+    Return ONLY a JSON object with these exact keys:
+    - category: Choose one: [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]
+    - quantity_lb: Estimated weight in pounds (number).
+    - food_description: A 3-5 word summary.
 
-    Input: "{text}"
-    Output valid JSON only:
+    User Input: "{text}"
     """
     try:
-        response = model.generate_content(prompt)
-        raw_json = response.text.strip().replace('```json', '').replace('```', '')
-        return json.loads(raw_json)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+            ),
+        )
+        return json.loads(response.text)
     except Exception as e:
         print(f"  [GEMINI ERROR] {e}")
         return {
@@ -71,7 +73,6 @@ def handle_message(phone: str, message: str):
             "phone_number": phone,
             "state": "AWAITING_DESC",
             "temp_data": {}
-            # Omit updated_at to let DB handle it
         }).execute()
         return "👋 Hi from Replate! We're ready to help you rescue that food. \n\nWhat kind of food do you have today? (e.g. '3 trays of pasta')"
 
@@ -97,7 +98,7 @@ def handle_message(phone: str, message: str):
         # 4. Inject Task into Supabase
         task_data = {
             "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
-            "date": date.today().isoformat(), # Use current date
+            "date": date.today().isoformat(),
             "start_time": "12:00",
             "end_time": "17:00",
             "donor_name": f"WhatsApp Donor ({phone[-4:]})",
@@ -105,8 +106,8 @@ def handle_message(phone: str, message: str):
             "lat": 37.7749, "lon": -122.4194,
             "food_description": temp_data.get("food_description"),
             "category": temp_data.get("category"),
-            "quantity_lb": temp_data.get("quantity_lb"),
-            "requires_review": temp_data.get("requires_review", False), # Propagate review flag
+            "quantity_lb": float(temp_data.get("quantity_lb", 0)),
+            "requires_review": temp_data.get("requires_review", False),
             "donor_whatsapp_id": phone,
             "status": "available"
         }
@@ -127,12 +128,13 @@ def handle_message(phone: str, message: str):
 
 def run_simulator():
     parser = argparse.ArgumentParser(description="Replate WhatsApp Simulator")
-    parser.add_argument("--phone", default="+14155550000", help="Donor phone number for testing concurrent sessions")
+    parser.add_argument("--phone", default="+14155550000", help="Donor phone number")
     args = parser.parse_args()
 
     print("═" * 50)
     print("  REPLATE WHATSAPP SIMULATOR (V1)")
     print(f"  Testing with Phone: {args.phone}")
+    print("  Using Model: gemini-2.0-flash")
     print("  Commands: 'RESET' to start over, 'STOP' to delete, 'EXIT' to quit.")
     print("═" * 50)
     
