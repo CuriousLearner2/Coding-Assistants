@@ -1,63 +1,68 @@
 # Product Requirements Document (PRD): Replate Multi-Channel Platform
 
 ## 1. Executive Summary
-Replate is a multi-channel logistics platform designed to eliminate food waste. It connects food donors (businesses) with volunteer drivers and non-profit organizations (NPOs). The system combines a **Python CLI** for driver operations with a **WhatsApp Business API** layer for donor intake and real-time coordination.
+Replate is a logistics platform designed to eliminate food waste by connecting donors (businesses) with volunteer drivers and NPOs. This document outlines the phased rollout of the platform, moving from a core CLI tool to a multi-channel system integrated with the WhatsApp Business API.
 
-## 2. Target Users
-*   **Volunteer Drivers:** Use the CLI/App to discover, claim, and log pickups.
-*   **Food Donors (Restaurants/Cafeterias):** Use WhatsApp to report surplus food without needing to install a dedicated app.
-*   **Replate Admins:** Oversee the automated flow and provide support.
+---
 
-## 3. Core Functionality
+## 2. Version 1: Core Operations & Lead Generation (CURRENT)
 
-### 3.1 Driver Operations (CLI/App)
-*   **Authentication:** Secure login/signup with local session persistence.
-*   **Onboarding:** Selection of primary NPO partner affiliation.
-*   **Task Discovery:** Browse available pickups ranked by proximity (Haversine distance).
-*   **Task Execution:** Claiming tasks and logging completion (weight, photo, destination).
+### 2.1 Scope
+The primary goal of V1 is to digitize the driver workflow and automate the intake of food donations via WhatsApp.
 
-### 3.2 WhatsApp Business Integration (Donor & Dispatch)
-#### A. Automated Donation Intake (Lead Gen)
-*   **Multi-Turn Bot:** A conversational interface that guides donors through a 3-4 turn process:
-    1. Initial Greeting/Lead Capture.
-    2. Food Description intake.
-    3. Quantity/Weight estimation.
-    4. Pickup window confirmation.
-*   **Smart Categorization:** Uses an LLM (Gemini) to convert natural language descriptions into structured categories (e.g., "leftover chicken" -> `Prepared Meals`).
-*   **Auto-Task Creation:** Once the conversation is complete, a new task is automatically injected into the Supabase database.
+### 2.2 Driver Operations (Python CLI)
+*   **Authentication:** Simulated login/signup for prototype testing with local session persistence.
+*   **Onboarding:** Guided NPO partner selection for new drivers.
+*   **Task Discovery:** Browse available pickups for Today/Tomorrow, ranked by Haversine distance.
+*   **Task Execution:** Atomically claim tasks and log completion (weight, photo simulation, and destination).
 
-#### B. Proactive Volunteer Dispatch
-*   **Proximity Alerts:** When a new task is created, the system identifies the nearest active volunteers.
-*   **WhatsApp Push:** Sends a template message to drivers: "Hi Alice, 30lbs of Prepared Meals available 1.2km away. Claim here: [Link]".
+### 2.3 WhatsApp Lead Generation (#1)
+*   **Automated Intake Bot:** A conversational interface for donors to report surplus food without an app.
+*   **Multi-Turn Interaction:** 
+    1. Capture donor identity/location.
+    2. Collect food description.
+    3. Capture estimated quantity and pickup window.
+*   **State Management:** A dedicated `whatsapp_sessions` table in Supabase to track multi-turn progress.
+*   **Smart Categorization (LLM):** Integration with Gemini API to parse natural language (e.g., "3 trays of veggie pasta") into structured data:
+    *   **Category:** (Prepared Meals, Produce, Bakery, etc.)
+    *   **Quantity:** Estimated weight in lbs.
+*   **Auto-Injection:** Completed conversations automatically create a new `available` task in the Supabase database.
 
-#### C. Donor Impact Loop
-*   **Automated Gratitude:** Upon task completion by a driver, the donor receives an instant WhatsApp update.
-*   **Impact Metrics:** "Your 30lb donation was delivered! You just helped provide ~25 meals."
+---
 
-#### D. Live "On-the-Ground" Support
-*   **Escalation:** A "Help" trigger in the CLI/WhatsApp that connects the user to a live Replate dispatcher.
+## 3. Version 2: Proactive Coordination & Impact
+
+### 3.1 Proactive Volunteer Dispatch (#2)
+*   **Proximity Alerts:** Automated WhatsApp templates sent to the nearest 3 drivers when a high-priority task is injected.
+*   **Direct Links:** Messages include deep-links to the CLI/App to claim the task instantly.
+
+### 3.2 Donor Impact Loop (#3)
+*   **Automated Gratitude:** WhatsApp message sent to the donor the moment a volunteer logs completion.
+*   **Metrics:** Real-time feedback on how many meals the specific donation provided.
+
+### 3.3 Live Support & Escalation (#4)
+*   **Live Chat:** A "Help" command in both CLI and WhatsApp that routes the user to a human Replate dispatcher.
+
+---
 
 ## 4. Technical Requirements
 
 ### 4.1 Backend Architecture
-*   **Primary:** Remote Supabase (BaaS) for database, auth, and edge functions.
-*   **Edge Functions:** TypeScript-based serverless functions to handle WhatsApp Webhooks and LLM calls.
-*   **Intelligence:** Gemini API integration for unstructured -> structured data extraction.
+*   **Infrastructure:** Supabase (PostgreSQL, Edge Functions, RLS).
+*   **AI Layer:** Gemini Pro for unstructured data extraction (V1).
+*   **Messaging:** Meta WhatsApp Business API Cloud (V1/V2).
 
-### 4.2 Data Storage (Supabase)
-*   **Drivers:** Profile info, coordinates, affiliate NPO.
-*   **Tasks:** Pickup metadata, **food category**, **quantity (lbs)**, and status.
-*   **WhatsApp Sessions:** State machine table to track multi-turn conversation progress (`phone_number`, `current_state`, `temp_json_data`).
+### 4.2 Data Schema (V1 Enhancements)
+*   **Tasks Table:** Add `category`, `quantity_lb`, and `donor_whatsapp_id`.
+*   **WhatsApp Sessions Table:** Track `phone_number`, `state`, and `temp_payload`.
 
-### 4.3 Communication Layer
-*   **Inbound:** Meta/WhatsApp Webhooks -> Supabase Edge Functions.
-*   **Outbound:** Supabase Database Triggers -> WhatsApp Template API.
+### 4.3 Security
+*   **V1 Prototype:** Simulated Identity Layer (manual table lookups).
+*   **V2 Production:** Full migration to Supabase Auth (JWT/signed tokens).
 
-## 5. Environment Management
-*   `REPLATE_BACKEND`: Toggle between `supabase` and legacy `mock`.
-*   `WHATSAPP_API_KEY` & `GEMINI_API_KEY`: Required for multi-channel features.
+---
 
-## 6. Future Roadmap
-*   **Route Optimization:** Dynamic multi-stop routing for drivers claiming >1 task.
-*   **Supabase Storage:** Real photo uploads from CLI and WhatsApp.
-*   **Admin Dashboard:** Web-based view of the real-time logistics map.
+## 5. Reviewer Checklist
+- [ ] Is the transition from unstructured WhatsApp text to structured database rows clearly defined?
+- [ ] Does the V1 schema support the required LLM categorization outputs?
+- [ ] Is the state machine for the multi-turn conversation robust enough for V1?
