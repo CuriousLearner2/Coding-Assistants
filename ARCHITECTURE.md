@@ -13,15 +13,15 @@
 
 ## 2. WhatsApp Multi-Turn Logic
 
-### 2.1 State Enumeration
-The `whatsapp_sessions` table manages the following states:
+### 2.1 State Machine (Simplified V1)
+The system uses a 3-turn conversational flow. High-level states are listed below. For the full state-transition diagram and special command handling (RESET/STOP), refer to `TECH_DESIGN_WHATSAPP_V1.md`.
 
 | State | Action | Next State |
 |-------|--------|------------|
 | `START` | Greet donor, ask for food description. | `AWAITING_DESC` |
-| `AWAITING_DESC` | Capture text, ask for approximate weight/quantity. | `AWAITING_QUANTITY` |
-| `AWAITING_QUANTITY` | Capture quantity, ask for pickup window (e.g., "until 4pm"). | `AWAITING_WINDOW` |
-| `AWAITING_WINDOW` | Finalize data, create Task row, send confirmation. | `COMPLETED` |
+| `AWAITING_DESC` | Extract Category & Qty using Gemini Pro, ask for pickup window. | `AWAITING_WINDOW` |
+| `AWAITING_WINDOW` | Inject Task into Supabase, send confirmation. | `COMPLETED` |
+| `COMPLETED` | Terminal state; wait for 'NEW' to restart. | `START` (on trigger) |
 
 ### 2.2 Session Expiry (TTL)
 *   **Policy:** WhatsApp sessions expire **24 hours** after the last interaction.
@@ -55,6 +55,7 @@ If Gemini returns low-confidence scores, fails to parse, or the API is unavailab
 *   `category`: TEXT (Check constraint enforced).
 *   `quantity_lb`: NUMERIC (Standardized unit).
 *   `address_json`: Stores geo-coordinates and human-readable address.
+*   `requires_review`: BOOLEAN (Flag for AI extraction issues).
 
 ### 5.2 Fixture Reconciliation
 To maintain consistency between legacy and Supabase modes, `quantity_lb` is calculated as:
