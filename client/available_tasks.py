@@ -6,17 +6,25 @@ from client import display as d
 
 def _task_summary(task: dict) -> str:
     time_range = d.fmt_time_range(task.get("start_time"), task.get("end_time"))
-    # Supabase uses address_json
     addr = d.fmt_address(task.get("address_json", {}))
     dist = d.fmt_distance(task.get("distance_km"))
     dist_str = f"  [{dist}]" if dist else ""
-    return f"{task['donor_name']:<28}  {time_range}{dist_str}\n     {addr}"
+    
+    review_prefix = "⚠️ [REVIEW] " if task.get("requires_review") else ""
+    donor_name = f"{review_prefix}{task['donor_name']}"
+    
+    return f"{donor_name:<38}  {time_range}{dist_str}\n     {addr}"
 
 
 def _show_task_detail(task: dict, session: dict) -> bool:
     """Display full task detail. Returns True if task was claimed."""
     d.header(f"Pick-up Detail — {task['donor_name']}")
     d.blank()
+    if task.get("requires_review"):
+        d.error("AI REVIEW REQUIRED: Details were extracted automatically.")
+        d.info("  Please verify food type and quantity upon arrival.")
+        d.blank()
+
     d.info(f"Date:      {d.fmt_date(task['date'])}")
     d.info(f"Time:      {d.fmt_time_range(task.get('start_time'), task.get('end_time'))}")
     d.blank()
@@ -30,7 +38,11 @@ def _show_task_detail(task: dict, session: dict) -> bool:
     d.info(f"Email:     {task.get('contact_email', '')}")
     d.blank()
     d.info(f"Food:      {task.get('food_description', '')}")
-    d.info(f"Trays:     {d.fmt_tray(task.get('tray_type', ''), task.get('tray_count', 0))}")
+    
+    if task.get("category"):
+        d.info(f"Quantity:  {d.fmt_quantity(task.get('category'), task.get('quantity_lb', 0))}")
+    else:
+        d.info(f"Trays:     {d.fmt_tray(task.get('tray_type', ''), task.get('tray_count', 0))}")
     d.blank()
 
     choice = d.menu(["Claim this pick-up"], back_label="Back to list")

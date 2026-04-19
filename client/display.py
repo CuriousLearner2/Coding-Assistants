@@ -110,8 +110,16 @@ def fmt_date(date_str: str) -> str:
 
 
 def fmt_tray(tray_type: str, tray_count: int) -> str:
+    if not tray_type or not tray_count:
+        return "Not specified"
     label = f"{tray_count} {tray_type} tray{'s' if tray_count != 1 else ''}"
     return label
+
+
+def fmt_quantity(category: str, quantity_lb: float) -> str:
+    if not category:
+        return f"{quantity_lb:.1f} lbs"
+    return f"{category} (~{quantity_lb:.1f} lbs)"
 
 
 def fmt_distance(km: float | None) -> str:
