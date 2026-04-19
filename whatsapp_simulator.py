@@ -94,6 +94,30 @@ def extract_donation_details(text: str):
         print(f"  [GEMINI ERROR] {e} - Falling back to local mock.")
         return extract_donation_details_mock(text)
 
+def extract_window_details(text: str):
+    """Use AI to parse natural language dates/times."""
+    today = date.today().isoformat()
+    prompt = f"""
+    Today is {today}.
+    Extract the pickup date and end time from this user input: "{text}"
+    Return ONLY a JSON object:
+    {{
+      "date": "YYYY-MM-DD",
+      "end_time": "HH:MM",
+      "explanation": "short reason"
+    }}
+    """
+    try:
+        response = client.models.generate_content(
+            model='gemini-flash-latest',
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type='application/json'),
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"  [WINDOW AI ERROR] {e}")
+        return {"date": today, "end_time": "17:00", "explanation": "Fallback to today 5pm"}
+
 # ── State Machine Logic ────────────────────────────────────────────────────────
 
 def handle_message(phone: str, message: str):
@@ -173,15 +197,16 @@ def handle_message(phone: str, message: str):
             return "Sorry, I didn't quite catch that. Does the summary look okay now? (Reply 'Yes' or try describing the change again)"
 
     if state == "AWAITING_WINDOW":
-        # Final Turn
-        temp_data["pickup_window"] = message
+        # Final Turn: Parse Date/Time
+        print(f"  [AI] Parsing window: '{message}'...")
+        window = extract_window_details(message)
         
         # 4. Inject Task into Supabase
         task_data = {
             "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
-            "date": date.today().isoformat(),
-            "start_time": "12:00",
-            "end_time": "17:00",
+            "date": window.get("date"),
+            "start_time": "09:00",
+            "end_time": window.get("end_time"),
             "donor_name": f"WhatsApp Donor ({phone[-4:]})",
             "address_json": {"street": "Unknown (WA Lead)", "city": "SF", "state": "CA", "zip": "94105"},
             "lat": 37.7749, "lon": -122.4194,
@@ -200,7 +225,7 @@ def handle_message(phone: str, message: str):
             "state": "COMPLETED"
         }).eq("phone_number", phone).execute()
         
-        return "✅ Success! Your donation is now live in our system. A volunteer will be notified shortly. Thank you! 🥕"
+        return f"✅ Success! Your donation is live for {window.get('date')} until {window.get('end_time')}. A volunteer will be notified. Thank you! 🥕"
 
     if state == "COMPLETED":
         return "Your previous donation was logged. Type 'NEW' to report more surplus food!"

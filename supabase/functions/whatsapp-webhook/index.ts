@@ -100,6 +100,25 @@ async function extractWithGemini(text: string, retries = 3) {
   }
 }
 
+async function extractWindowWithGemini(text: string) {
+  const today = new Date().toISOString().split('T')[0]
+  const prompt = `Today is ${today}. Extract date and end time from: "${text}". Return ONLY JSON: {"date": "YYYY-MM-DD", "end_time": "HH:MM"}`
+  
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    })
+    const data = await res.json()
+    const rawText = data.candidates[0].content.parts[0].text
+    return JSON.parse(rawText.replace(/```json|```/g, "").trim())
+  } catch (e) {
+    console.error("Window AI Error:", e)
+    return { date: today, end_time: "17:00" }
+  }
+}
+
 // ── Main Server ───────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -201,11 +220,12 @@ serve(async (req) => {
       }
     }
     else if (session.state === "AWAITING_WINDOW") {
+      const window = await extractWindowWithGemini(text)
       const taskData = {
         encrypted_id: `wa_${phone.slice(-4)}_${crypto.randomUUID().split('-')[0]}`,
-        date: new Date().toISOString().split('T')[0],
-        start_time: "12:00",
-        end_time: "17:00",
+        date: window.date,
+        start_time: "09:00",
+        end_time: window.end_time,
         donor_name: `WhatsApp Donor (${phone.slice(-4)})`,
         address_json: { street: "Unknown (WA Lead)", city: "SF", state: "CA", zip: "94105" },
         lat: 37.7749,
@@ -222,7 +242,7 @@ serve(async (req) => {
       if (insertError) throw insertError
 
       await supabase.table("whatsapp_sessions").update({ state: "COMPLETED" }).eq("phone_number", phone)
-      await sendWhatsApp(phone, "✅ Success! Your donation is live. A volunteer will be notified. Thank you! 🥕")
+      await sendWhatsApp(phone, `✅ Success! Your donation is live for ${window.date} until ${window.end_time}. A volunteer will be notified. Thank you! 🥕`)
     }
     else if (session.state === "COMPLETED") {
       await sendWhatsApp(phone, "Your donation is logged. Type 'NEW' to report more surplus food!")
