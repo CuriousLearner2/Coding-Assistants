@@ -61,21 +61,36 @@ async function sendWhatsApp(to: string, body: string) {
   }
 }
 
-async function extractWithGemini(text: string) {
+async function extractWithGemini(text: string, retries = 3) {
   const prompt = `Return ONLY JSON: {"category": "One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]", "quantity_lb": number, "food_description": "short string", "requires_review": boolean}. Input: "${text}"`
   
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    })
-    const data = await res.json()
-    const rawText = data.candidates[0].content.parts[0].text
-    return JSON.parse(rawText.replace(/```json|```/g, "").trim())
-  } catch (e) {
-    console.error("Gemini Error:", e)
-    return { category: "Pantry", quantity_lb: 5, food_description: text.slice(0, 50), requires_review: true }
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      })
+      
+      if (!res.ok) {
+        if (res.status === 429) {
+          const delay = Math.pow(2, i) * 1000
+          console.warn(`Gemini Rate Limit (429). Retrying in ${delay}ms...`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        throw new Error(`Gemini API error: ${res.status}`)
+      }
+
+      const data = await res.json()
+      const rawText = data.candidates[0].content.parts[0].text
+      return JSON.parse(rawText.replace(/```json|```/g, "").trim())
+    } catch (e) {
+      if (i === retries - 1) {
+        console.error("Gemini Final Failure:", e)
+        return { category: "Pantry", quantity_lb: 5, food_description: text.slice(0, 50), requires_review: true }
+      }
+    }
   }
 }
 

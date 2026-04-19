@@ -2,11 +2,13 @@ import os
 import sys
 import json
 import argparse
+import re
 from datetime import date
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from google import genai
 from google.genai import types
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Load environment
 load_dotenv()
@@ -15,6 +17,7 @@ load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+MOCK_AI = os.environ.get("MOCK_AI", "false").lower() == "true"
 
 if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_KEY]):
     print("Error: Missing SUPABASE or GEMINI credentials in .env")
@@ -26,32 +29,54 @@ client = genai.Client(api_key=GEMINI_KEY)
 
 # ── Gemini Extraction Logic ───────────────────────────────────────────────────
 
-def extract_donation_details(text: str):
-    prompt = f"""
-    Return ONLY a JSON object with these exact keys:
-    - category: Choose one: [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]
-    - quantity_lb: Estimated weight in pounds (number).
-    - food_description: A 3-5 word summary.
+def extract_donation_details_mock(text: str):
+    """Local regex-based extraction to save API quota."""
+    # Try to find a number
+    nums = re.findall(r"\d+", text)
+    qty = float(nums[0]) if nums else 5.0
+    
+    # Simple category mapping
+    text_lower = text.lower()
+    category = "Pantry"
+    if any(w in text_lower for w in ["pasta", "chicken", "meal", "tray"]): category = "Prepared Meals"
+    elif any(w in text_lower for w in ["apple", "veg", "fruit", "produce"]): category = "Produce"
+    elif any(w in text_lower for w in ["bread", "donut", "pastry", "cake"]): category = "Bakery"
+    
+    return {
+        "category": category,
+        "quantity_lb": qty,
+        "food_description": text[:30],
+        "requires_review": True # Always review mock AI
+    }
 
-    User Input: "{text}"
-    """
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(Exception),
+    reraise=True
+)
+def _call_gemini_api(text: str):
+    prompt = f"JSON only: {{\"category\": \"One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]\", \"quantity_lb\": number, \"food_description\": \"clean summary\"}}. Input: \"{text}\""
+    
+    response = client.models.generate_content(
+        model='gemini-1.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type='application/json',
+        ),
+    )
+    return json.loads(response.text)
+
+def extract_donation_details(text: str):
+    if MOCK_AI:
+        print("  [MOCK AI] Using local extraction...")
+        return extract_donation_details_mock(text)
+
     try:
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type='application/json',
-            ),
-        )
-        return json.loads(response.text)
+        return _call_gemini_api(text)
     except Exception as e:
-        print(f"  [GEMINI ERROR] {e}")
-        return {
-            "category": "Pantry", 
-            "quantity_lb": 5.0, 
-            "food_description": text[:50],
-            "requires_review": True
-        }
+        print(f"  [GEMINI ERROR] {e} - Falling back to local mock.")
+        return extract_donation_details_mock(text)
 
 # ── State Machine Logic ────────────────────────────────────────────────────────
 
@@ -134,7 +159,7 @@ def run_simulator():
     print("═" * 50)
     print("  REPLATE WHATSAPP SIMULATOR (V1)")
     print(f"  Testing with Phone: {args.phone}")
-    print("  Using Model: gemini-2.0-flash")
+    print(f"  Using Model: {'MOCK' if MOCK_AI else 'gemini-1.5-flash'}")
     print("  Commands: 'RESET' to start over, 'STOP' to delete, 'EXIT' to quit.")
     print("═" * 50)
     
