@@ -28,22 +28,22 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = genai.Client(api_key=GEMINI_KEY)
 
 # ── Gemini Extraction Logic ───────────────────────────────────────────────────
-
 def extract_donation_details_mock(text: str):
     """Local regex-based extraction to save API quota."""
     # Try to find a number
     nums = re.findall(r"\d+", text)
     qty = float(nums[0]) if nums else 5.0
-    
-    # Simple category mapping
+
     text_lower = text.lower()
-    category = "Pantry"
-    if any(w in text_lower for w in ["pasta", "chicken", "meal", "tray"]): category = "Prepared Meals"
-    elif any(w in text_lower for w in ["apple", "veg", "fruit", "produce"]): category = "Produce"
-    elif any(w in text_lower for w in ["bread", "donut", "pastry", "cake"]): category = "Bakery"
-    
+    categories = []
+    if any(w in text_lower for w in ["pasta", "chicken", "meal", "tray"]): categories.append("Prepared Meals")
+    if any(w in text_lower for w in ["apple", "veg", "fruit", "produce", "lettuce"]): categories.append("Produce")
+    if any(w in text_lower for w in ["water", "sparkling", "bottle", "beverage", "soda"]): categories.append("Beverage")
+
+    if not categories: categories = ["Pantry"]
+
     return {
-        "category": category,
+        "categories": categories,
         "quantity_lb": qty,
         "food_description": text[:30],
         "item_list": f"- {text}",
@@ -60,7 +60,7 @@ def _call_gemini_api(text: str):
     prompt = f"""
     Return ONLY a JSON object:
     {{
-      "category": "One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]",
+      "categories": ["List all that apply: Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry"],
       "quantity_lb": estimated total weight in lbs (number),
       "food_description": "2-3 word summary",
       "item_list": "A bulleted list of everything mentioned"
@@ -154,10 +154,11 @@ def handle_message(phone: str, message: str):
             "temp_data": temp_data
         }).eq("phone_number", phone).execute()
         
+        cats = ", ".join(details.get("categories", ["Pantry"]))
         return (
             f"Got it! Here is what I've captured:\n\n"
             f"📋 *Items:*\n{details.get('item_list')}\n"
-            f"📦 *Category:* {details.get('category')}\n"
+            f"📦 *Categories:* {cats}\n"
             f"⚖️ *Est. Weight:* {details.get('quantity_lb')} lbs\n\n"
             f"Does this look correct? (Reply 'Yes' or tell me what to change, e.g., 'It is 20 lbs')"
         )
@@ -185,10 +186,11 @@ def handle_message(phone: str, message: str):
                 "temp_data": temp_data
             }).eq("phone_number", phone).execute()
             
+            cats = ", ".join(temp_data.get("categories", ["Pantry"]))
             return (
                 f"Updated! How about now?\n\n"
                 f"📋 *Items:* {temp_data.get('item_list')}\n"
-                f"📦 *Category:* {temp_data.get('category')}\n"
+                f"📦 *Categories:* {cats}\n"
                 f"⚖️ *Est. Weight:* {temp_data.get('quantity_lb')} lbs\n\n"
                 f"Reply 'Yes' to confirm or tell me what else to change."
             )
@@ -217,6 +219,7 @@ def handle_message(phone: str, message: str):
     if state == "AWAITING_WINDOW_REVIEW":
         if msg_upper in ["YES", "Y", "OK", "LOOKS GOOD", "CORRECT"]:
             # 4. Inject Task into Supabase
+            cats = ", ".join(temp_data.get("categories", ["Pantry"]))
             task_data = {
                 "encrypted_id": f"wa_{phone[-4:]}_{os.urandom(2).hex()}",
                 "date": temp_data.get("date"),
@@ -226,7 +229,7 @@ def handle_message(phone: str, message: str):
                 "address_json": {"street": "Unknown (WA Lead)", "city": "SF", "state": "CA", "zip": "94105"},
                 "lat": 37.7749, "lon": -122.4194,
                 "food_description": temp_data.get("food_description"),
-                "category": temp_data.get("category"),
+                "category": cats,
                 "quantity_lb": float(temp_data.get("quantity_lb", 0)),
                 "requires_review": temp_data.get("requires_review", False),
                 "donor_whatsapp_id": phone,

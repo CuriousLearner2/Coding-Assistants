@@ -63,7 +63,7 @@ async function sendWhatsApp(to: string, body: string) {
 
 async function extractWithGemini(text: string, retries = 3) {
   const prompt = `Return ONLY JSON: {
-    "category": "One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]", 
+    "categories": ["List all that apply from: Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry"], 
     "quantity_lb": number, 
     "food_description": "short summary",
     "item_list": "bulleted list of all items",
@@ -198,7 +198,8 @@ serve(async (req) => {
         temp_data: newData
       }).eq("phone_number", phone)
 
-      await sendWhatsApp(phone, `Got it! Here is what I've captured:\n\n📋 *Items:*\n${details.item_list}\n📦 *Category:* ${details.category}\n⚖️ *Est. Weight:* ${details.quantity_lb} lbs\n\nDoes this look correct? (Reply 'Yes' or tell me what to change)`)
+      const cats = details.categories.join(", ")
+      await sendWhatsApp(phone, `Got it! Here is what I've captured:\n\n📋 *Items:*\n${details.item_list}\n📦 *Categories:* ${cats}\n⚖️ *Est. Weight:* ${details.quantity_lb} lbs\n\nDoes this look correct? (Reply 'Yes' or tell me what to change)`)
     } 
     else if (session.state === "AWAITING_REVIEW") {
       if (msgUpper === "YES" || msgUpper === "Y" || msgUpper === "OK") {
@@ -216,7 +217,8 @@ serve(async (req) => {
         const newData = { ...session.temp_data, ...updated }
         
         await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
-        await sendWhatsApp(phone, `Updated! How about now?\n\n📋 *Items:* ${newData.item_list}\n📦 *Category:* ${newData.category}\n⚖️ *Est. Weight:* ${newData.quantity_lb} lbs\n\nReply 'Yes' to confirm or tell me what else to change.`)
+        const cats = newData.categories.join(", ")
+        await sendWhatsApp(phone, `Updated! How about now?\n\n📋 *Items:* ${newData.item_list}\n📦 *Categories:* ${cats}\n⚖️ *Est. Weight:* ${newData.quantity_lb} lbs\n\nReply 'Yes' to confirm or tell me what else to change.`)
       }
     }
     else if (session.state === "AWAITING_WINDOW") {
@@ -232,6 +234,7 @@ serve(async (req) => {
     }
     else if (session.state === "AWAITING_WINDOW_REVIEW") {
       if (msgUpper === "YES" || msgUpper === "Y" || msgUpper === "OK") {
+        const cats = session.temp_data.categories.join(", ")
         const taskData = {
           encrypted_id: `wa_${phone.slice(-4)}_${crypto.randomUUID().split('-')[0]}`,
           date: session.temp_data.date,
@@ -242,7 +245,7 @@ serve(async (req) => {
           lat: 37.7749,
           lon: -122.4194,
           food_description: session.temp_data.food_description,
-          category: session.temp_data.category,
+          category: cats,
           quantity_lb: session.temp_data.quantity_lb,
           requires_review: session.temp_data.requires_review || false,
           donor_whatsapp_id: phone,
