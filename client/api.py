@@ -50,18 +50,20 @@ def get_my_tasks(driver_id: str) -> List[dict]:
     return res.data
 
 def claim_task(encrypted_id: str, driver_id: str) -> dict:
-    # First check if still available
-    check = supabase.table("tasks").select("status").eq("encrypted_id", encrypted_id).single().execute()
-    if check.data and check.data["status"] != "available":
-        raise ConflictError("Task already claimed")
-    
+    """
+    Claim a task atomically to prevent race conditions.
+    This uses a conditional update: only update if the status is 'available'.
+    """
     res = supabase.table("tasks").update({
         "status": "claimed",
         "driver_id": driver_id
-    }).eq("encrypted_id", encrypted_id).execute()
+    }).eq("encrypted_id", encrypted_id).eq("status", "available").execute()
     
+    # If no rows were updated, it means the task was either not found 
+    # or was already claimed by someone else.
     if not res.data:
-        raise ApiError("Failed to claim task")
+        raise ConflictError("Task is no longer available or already claimed.")
+    
     return res.data[0]
 
 def complete_task(task_id: int, driver_id: str, details: dict) -> dict:
@@ -74,19 +76,40 @@ def complete_task(task_id: int, driver_id: str, details: dict) -> dict:
         raise ApiError("Failed to complete task")
     return res.data[0]
 
+# ──────────────────────────────────────────────────────────────────────────────
+# DEMO ONLY AUTHENTICATION
+# ──────────────────────────────────────────────────────────────────────────────
+# WARNING: The functions below are for PROTOTYPE DEMONSTRATION ONLY.
+# 1. They DO NOT verify passwords (they lookup by email only).
+# 2. They return a HARDCODED mock token instead of a real Supabase JWT.
+# 3. In a production app, use supabase.auth.sign_in_with_password()
+#    and supabase.auth.sign_up() to leverage real identity management.
+# ──────────────────────────────────────────────────────────────────────────────
+
 def login(email: str, password: str) -> dict:
+    # DEMO ONLY: No password verification performed here
     res = supabase.table("drivers").select("*").eq("email", email.lower()).execute()
     if not res.data:
         raise AuthError("Invalid email or password")
-    return {"driver": res.data[0], "token": "supabase_session_active"}
+    
+    return {
+        "driver": res.data[0], 
+        "token": "supabase_session_active_DEMO_ONLY"
+    }
 
 def signup(data: dict) -> dict:
-    # Remove password since we aren't using Supabase Auth for this demo simulation
+    # DEMO ONLY: Password is removed and NOT saved or verified
     clean_data = {k: v for k, v in data.items() if k != "password"}
     res = supabase.table("drivers").insert(clean_data).execute()
     if not res.data:
         raise ValidationError("Signup failed")
-    return {"driver": res.data[0], "token": "supabase_session_active"}
+    
+    return {
+        "driver": res.data[0], 
+        "token": "supabase_session_active_DEMO_ONLY"
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 def update_driver(driver_id: str, updates: dict) -> dict:
     res = supabase.table("drivers").update(updates).eq("id", driver_id).execute()
