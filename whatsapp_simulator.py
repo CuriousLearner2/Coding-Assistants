@@ -73,7 +73,13 @@ def extract_donation_details(text: str):
         return extract_donation_details_mock(text)
 
     try:
-        return _call_gemini_api(text)
+        details = _call_gemini_api(text)
+        # Ensure it's a dict, not a list
+        if isinstance(details, list) and len(details) > 0:
+            return details[0]
+        if not isinstance(details, dict):
+            raise ValueError(f"AI returned {type(details)} instead of dict")
+        return details
     except Exception as e:
         print(f"  [GEMINI ERROR] {e} - Falling back to local mock.")
         return extract_donation_details_mock(text)
@@ -159,7 +165,7 @@ def run_simulator():
     print("═" * 50)
     print("  REPLATE WHATSAPP SIMULATOR (V1)")
     print(f"  Testing with Phone: {args.phone}")
-    print(f"  Using Model: {'MOCK' if MOCK_AI else 'gemini-2.0-flash'}")
+    print(f"  Using Model: {'MOCK' if MOCK_AI else 'gemini-flash-latest'}")
     print("  Commands: 'RESET' to start over, 'STOP' to delete, 'EXIT' to quit.")
     print("═" * 50)
     
