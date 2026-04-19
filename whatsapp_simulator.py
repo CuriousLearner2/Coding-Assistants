@@ -46,7 +46,8 @@ def extract_donation_details_mock(text: str):
         "category": category,
         "quantity_lb": qty,
         "food_description": text[:30],
-        "requires_review": True # Always review mock AI
+        "item_list": f"- {text}",
+        "requires_review": True
     }
 
 @retry(
@@ -56,7 +57,16 @@ def extract_donation_details_mock(text: str):
     reraise=True
 )
 def _call_gemini_api(text: str):
-    prompt = f"JSON only: {{\"category\": \"One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]\", \"quantity_lb\": number, \"food_description\": \"clean summary\"}}. Input: \"{text}\""
+    prompt = f"""
+    Return ONLY a JSON object:
+    {{
+      "category": "One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]",
+      "quantity_lb": estimated total weight in lbs (number),
+      "food_description": "2-3 word summary",
+      "item_list": "A bulleted list of everything mentioned"
+    }}
+    Input: "{text}"
+    """
     
     response = client.models.generate_content(
         model='gemini-flash-latest',
@@ -76,7 +86,7 @@ def extract_donation_details(text: str):
         details = _call_gemini_api(text)
         # Ensure it's a dict, not a list
         if isinstance(details, list) and len(details) > 0:
-            return details[0]
+            details = details[0]
         if not isinstance(details, dict):
             raise ValueError(f"AI returned {type(details)} instead of dict")
         return details
@@ -116,11 +126,51 @@ def handle_message(phone: str, message: str):
         temp_data.update(details)
         
         supabase.table("whatsapp_sessions").update({
-            "state": "AWAITING_WINDOW",
+            "state": "AWAITING_REVIEW",
             "temp_data": temp_data
         }).eq("phone_number", phone).execute()
         
-        return f"Got it! {details.get('food_description')} ({details.get('category')}). \n\nWhen is the latest we can pick this up? (e.g. 'Until 5pm today')"
+        return (
+            f"Got it! Here is what I've captured:\n\n"
+            f"📋 *Items:*\n{details.get('item_list')}\n"
+            f"📦 *Category:* {details.get('category')}\n"
+            f"⚖️ *Est. Weight:* {details.get('quantity_lb')} lbs\n\n"
+            f"Does this look correct? (Reply 'Yes' or tell me what to change, e.g., 'It is 20 lbs')"
+        )
+
+    if state == "AWAITING_REVIEW":
+        if msg_upper in ["YES", "Y", "OK", "LOOKS GOOD", "CORRECT"]:
+            supabase.table("whatsapp_sessions").update({
+                "state": "AWAITING_WINDOW"
+            }).eq("phone_number", phone).execute()
+            return "Great! When is the latest we can pick this up? (e.g. 'Until 5pm today')"
+        
+        # User is correcting the AI
+        print(f"  [AI] Updating details based on correction: '{message}'...")
+        prompt = f"The current data is {json.dumps(temp_data)}. Update it based on this user correction: \"{message}\". Return updated JSON."
+        try:
+            response = client.models.generate_content(
+                model='gemini-flash-latest',
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type='application/json'),
+            )
+            updated = json.loads(response.text)
+            temp_data.update(updated)
+            
+            supabase.table("whatsapp_sessions").update({
+                "temp_data": temp_data
+            }).eq("phone_number", phone).execute()
+            
+            return (
+                f"Updated! How about now?\n\n"
+                f"📋 *Items:* {temp_data.get('item_list')}\n"
+                f"📦 *Category:* {temp_data.get('category')}\n"
+                f"⚖️ *Est. Weight:* {temp_data.get('quantity_lb')} lbs\n\n"
+                f"Reply 'Yes' to confirm or tell me what else to change."
+            )
+        except Exception as e:
+            print(f"  [CORRECTION ERROR] {e}")
+            return "Sorry, I didn't quite catch that. Does the summary look okay now? (Reply 'Yes' or try describing the change again)"
 
     if state == "AWAITING_WINDOW":
         # Final Turn

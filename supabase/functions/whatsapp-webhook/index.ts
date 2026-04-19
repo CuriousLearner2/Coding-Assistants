@@ -62,7 +62,13 @@ async function sendWhatsApp(to: string, body: string) {
 }
 
 async function extractWithGemini(text: string, retries = 3) {
-  const prompt = `Return ONLY JSON: {"category": "One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]", "quantity_lb": number, "food_description": "short string", "requires_review": boolean}. Input: "${text}"`
+  const prompt = `Return ONLY JSON: {
+    "category": "One of [Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Pantry]", 
+    "quantity_lb": number, 
+    "food_description": "short summary",
+    "item_list": "bulleted list of all items",
+    "requires_review": boolean
+  }. Input: "${text}"`
   
   for (let i = 0; i < retries; i++) {
     try {
@@ -169,12 +175,31 @@ serve(async (req) => {
       const newData = { ...session.temp_data, ...details }
       
       await supabase.table("whatsapp_sessions").update({
-        state: "AWAITING_WINDOW",
+        state: "AWAITING_REVIEW",
         temp_data: newData
       }).eq("phone_number", phone)
 
-      await sendWhatsApp(phone, `Got it! ${details.food_description} (${details.category}). \n\nWhen is the latest we can pick this up?`)
+      await sendWhatsApp(phone, `Got it! Here is what I've captured:\n\n📋 *Items:*\n${details.item_list}\n📦 *Category:* ${details.category}\n⚖️ *Est. Weight:* ${details.quantity_lb} lbs\n\nDoes this look correct? (Reply 'Yes' or tell me what to change)`)
     } 
+    else if (session.state === "AWAITING_REVIEW") {
+      if (msgUpper === "YES" || msgUpper === "Y" || msgUpper === "OK") {
+        await supabase.table("whatsapp_sessions").update({ state: "AWAITING_WINDOW" }).eq("phone_number", phone)
+        await sendWhatsApp(phone, "Great! When is the latest we can pick this up? (e.g. 'Until 5pm today')")
+      } else {
+        const prompt = `Current data: ${JSON.stringify(session.temp_data)}. Update it based on: "${text}". Return updated JSON.`
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        })
+        const data = await res.json()
+        const updated = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, "").trim())
+        const newData = { ...session.temp_data, ...updated }
+        
+        await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
+        await sendWhatsApp(phone, `Updated! How about now?\n\n📋 *Items:* ${newData.item_list}\n📦 *Category:* ${newData.category}\n⚖️ *Est. Weight:* ${newData.quantity_lb} lbs\n\nReply 'Yes' to confirm or tell me what else to change.`)
+      }
+    }
     else if (session.state === "AWAITING_WINDOW") {
       const taskData = {
         encrypted_id: `wa_${phone.slice(-4)}_${crypto.randomUUID().split('-')[0]}`,
