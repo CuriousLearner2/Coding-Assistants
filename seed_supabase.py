@@ -33,12 +33,12 @@ def seed():
     print(f"Connecting to {URL}...")
 
     # 1. Clear existing data
-    # Robust delete: Use filter that captures all records regardless of type (UUID or Int)
+    # Robust delete: Use filter that targets all records regardless of primary key type (UUID or Int)
     print("Cleaning existing data...")
-    # .neq('id', -1) is a safe way to target every row in a table for these fixtures
-    supabase.table("tasks").delete().neq("id", -1).execute()
-    supabase.table("drivers").delete().neq("email", "MOCK_DELETE_ALL").execute()
-    supabase.table("partners").delete().neq("id", -1).execute()
+    # .not_.is_('id', 'null') is a type-agnostic way to target every row in a table
+    supabase.table("tasks").delete().not_.is_("id", "null").execute()
+    supabase.table("drivers").delete().not_.is_("id", "null").execute()
+    supabase.table("partners").delete().not_.is_("id", "null").execute()
 
     # 2. Seed Partners
     print(f"Seeding {len(PARTNERS)} partners...")
