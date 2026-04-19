@@ -77,18 +77,22 @@ def complete_task(task_id: int, driver_id: str, details: dict) -> dict:
     return res.data[0]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DEMO ONLY AUTHENTICATION
+# ⚠️ SIMULATED IDENTITY LAYER (DEMO ONLY)
 # ──────────────────────────────────────────────────────────────────────────────
-# WARNING: The functions below are for PROTOTYPE DEMONSTRATION ONLY.
-# 1. They DO NOT verify passwords (they lookup by email only).
-# 2. They return a HARDCODED mock token instead of a real Supabase JWT.
-# 3. In a production app, use supabase.auth.sign_in_with_password()
-#    and supabase.auth.sign_up() to leverage real identity management.
+# THE FUNCTIONS BELOW ARE NOT PRODUCTION-READY.
+# 
+# 1. AUTH BYPASS: They perform manual table lookups instead of using 
+#    supabase.auth.sign_in_with_password().
+# 2. NO JWT VALIDATION: They return a hardcoded string instead of a 
+#    cryptographically signed Supabase JWT.
+# 3. NO ENCRYPTION: Passwords are not hashed or verified against Auth providers.
+#
+# TO UPGRADE TO PRODUCTION: 
+# Replace these with real Supabase Auth calls and enable email confirmation.
 # ──────────────────────────────────────────────────────────────────────────────
 
 def login(email: str, password: str) -> dict:
-    # DEMO ONLY: Basic password verification for seeded accounts
-    # In a production app, use supabase.auth.sign_in_with_password()
+    """SIMULATED LOGIN: Table lookup only. DO NOT USE IN PRODUCTION."""
     res = supabase.table("drivers").select("*").eq("email", email.lower()).execute()
     if not res.data:
         raise AuthError("Invalid email or password")
@@ -101,11 +105,12 @@ def login(email: str, password: str) -> dict:
     
     return {
         "driver": driver, 
-        "token": "supabase_session_active_DEMO_ONLY"
+        "token": "SIMULATED_SESSION_JWT_DO_NOT_USE_IN_PROD"
     }
 
 def signup(data: dict) -> dict:
-    # DEMO ONLY: Password is removed and NOT saved or verified
+    """SIMULATED SIGNUP: Manual table insert only. DO NOT USE IN PRODUCTION."""
+    # Remove password since we aren't using real Supabase Auth providers
     clean_data = {k: v for k, v in data.items() if k != "password"}
     res = supabase.table("drivers").insert(clean_data).execute()
     if not res.data:
@@ -113,7 +118,7 @@ def signup(data: dict) -> dict:
     
     return {
         "driver": res.data[0], 
-        "token": "supabase_session_active_DEMO_ONLY"
+        "token": "SIMULATED_SESSION_JWT_DO_NOT_USE_IN_PROD"
     }
 
 # ──────────────────────────────────────────────────────────────────────────────

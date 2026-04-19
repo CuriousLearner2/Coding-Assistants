@@ -36,6 +36,12 @@ The project now uses **Supabase** as its primary backend.
 python main.py
 ```
 
+## ⚠️ Security Disclaimer
+This application is a **functional prototype**. 
+*   **Authentication is SIMULATED:** It performs manual lookups in the `drivers` table for demo purposes. 
+*   **DO NOT USE THIS IN PRODUCTION:** It does not implement real JWT validation or secure password hashing.
+*   See `ARCHITECTURE.md` for the production migration path.
+
 ## Deprecation Notice: Dummy Backend
 The local Flask mock backend (`dummy_backend/`) is now **DEPRECATED**. It remains in the codebase for legacy testing purposes but is no longer the recommended way to run the application.
 

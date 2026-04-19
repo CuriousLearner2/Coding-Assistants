@@ -35,5 +35,19 @@ This Python CLI is architecturally aligned with the **Replate React Native** mob
 *   The same **Geo-logic** (Haversine distance ranking).
 *   The same **Security model** (RLS and Token-based auth).
 
-## 4. Portability
+## 4. Security & Identity Status (⚠️ IMPORTANT)
+
+### 4.1 Simulated Identity Layer
+This CLI uses a **Simulated Identity Layer** for ease of demonstration and testing. 
+*   **How it works:** It queries the `drivers` table directly by email.
+*   **Why:** This allows the CLI to run immediately after seeding without requiring manual user creation in the Supabase Auth UI or email verification.
+*   **Security Impact:** It **does not** use real password hashing or JWT verification.
+
+### 4.2 Production Path
+To transition this project to production-grade security:
+1.  **Auth Integration:** Migrate `login()` and `signup()` in `client/api.py` to use `supabase.auth.sign_in_with_password()` and `supabase.auth.signup()`.
+2.  **Triggers:** Implement a PostgreSQL trigger to automatically create a row in the `public.drivers` table when a new user is created in `auth.users`.
+3.  **RLS Enforcement:** Update Row-Level Security policies to use `auth.uid()` instead of the simulated session logic.
+
+## 5. Portability
 The `client/api.py` module acts as a **Backend Switcher**. By changing the `REPLATE_BACKEND` environment variable, the entire CLI can pivot between the high-fidelity remote Supabase and the low-fidelity local mock without changing any UI logic.
