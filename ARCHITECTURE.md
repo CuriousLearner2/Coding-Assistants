@@ -4,7 +4,6 @@
 
 ### 1.1 Python CLI (Frontend)
 *   **Role:** Terminal interface for volunteer drivers.
-*   **State:** Minimal local state (session token) in `~/.replate/session.json`.
 *   **API Client:** A custom wrapper in `client/api.py` that supports both Supabase and Mock backends via the `REPLATE_BACKEND` env var.
 
 ### 1.2 Supabase (Core Backend)
@@ -12,45 +11,58 @@
 *   **Edge Functions:** TypeScript serverless functions to handle WhatsApp Webhooks and Gemini LLM integration.
 *   **Persistence:** Primary store for Drivers, Tasks, Partners, and WhatsApp Sessions.
 
-### 1.3 WhatsApp/Meta Integration
-*   **Webhooks:** Meta sends incoming messages to a Supabase Edge Function endpoint.
-*   **State Machine:** Managed via the `whatsapp_sessions` table (see Section 2.1).
+## 2. WhatsApp Multi-Turn Logic
 
-## 2. Technical Implementation Details
+### 2.1 State Enumeration
+The `whatsapp_sessions` table manages the following states:
 
-### 2.1 WhatsApp Multi-Turn State Machine
-To handle conversational state, the `whatsapp_sessions` table tracks:
-| Field | Type | Description |
-|-------|------|-------------|
-| `phone_number` | TEXT (PK) | Unique identifier for the donor. |
-| `state` | TEXT | Current stage (e.g., `AWAITING_DESC`, `AWAITING_WEIGHT`). |
-| `temp_data` | JSONB | Partial data captured during the conversation. |
+| State | Action | Next State |
+|-------|--------|------------|
+| `START` | Greet donor, ask for food description. | `AWAITING_DESC` |
+| `AWAITING_DESC` | Capture text, ask for approximate weight/quantity. | `AWAITING_QUANTITY` |
+| `AWAITING_QUANTITY` | Capture quantity, ask for pickup window (e.g., "until 4pm"). | `AWAITING_WINDOW` |
+| `AWAITING_WINDOW` | Finalize data, create Task row, send confirmation. | `COMPLETED` |
 
-### 2.2 Unstructured-to-Structured Data Flow
-1. **Input:** User types "3 trays of veggie pasta" in WhatsApp.
-2. **AI Processing:** Supabase Edge Function calls **Gemini Pro** with a system prompt to extract:
-   * `category`: "Prepared Meals"
-   * `quantity_lb`: 15.0 (estimated)
-3. **Injection:** Edge Function inserts a new row into the `tasks` table with `status='available'`.
+### 2.2 Session Expiry (TTL)
+*   **Policy:** WhatsApp sessions expire **24 hours** after the last interaction.
+*   **Implementation:** A PostgreSQL Cron job (or Supabase scheduled function) deletes rows in `whatsapp_sessions` where `updated_at < now() - interval '24 hours'`.
 
-### 2.3 Database Schema Enhancements (V1)
-*   **`tasks` Table Updates:**
-    * `category`: (Check constraint: Prepared, Produce, Bakery, Dairy, Meat, Pantry)
-    * `quantity_lb`: Numeric
-    * `donor_whatsapp_id`: Text (linking back to the donor)
-    * `address_json`: Stores street, city, state, zip for Haversine calculations.
+### 2.3 Webhook Verification (V1 Requirement)
+Incoming requests from Meta **must** be verified using the `X-Hub-Signature-256` header and the app's `App Secret`. Requests failing verification will be rejected with a 401 Unauthorized before any processing occurs.
 
-## 3. Security & Identity Status
+## 3. Intelligence & Fallbacks (Gemini)
 
-### 3.1 Simulated Identity Layer (⚠️ PROTOTYPE ONLY)
-*   **Login/Signup:** Performed via manual table lookups in `drivers` by email.
-*   **Passwords:** Not hashed or verified in V1.
-*   **Tokens:** Hardcoded `SIMULATED_SESSION_JWT` used to maintain CLI session state.
+### 3.1 Extraction Logic
+The system uses Gemini Pro to transform unstructured text into:
+*   `category`: One of [Prepared, Produce, Bakery, Dairy, Meat, Pantry].
+*   `quantity_lb`: Numeric estimate.
 
-### 3.2 Production Migration Path
-1. Replace `api.py` auth calls with `supabase.auth.sign_in_with_password()`.
-2. Enable RLS policies that verify `auth.uid() == driver_id`.
-3. Implement WhatsApp signature verification to validate incoming Meta webhooks.
+### 3.2 Fallback Strategy
+If Gemini returns low-confidence scores, fails to parse, or the API is unavailable:
+1.  **Default Category:** Assign `Pantry` (lowest risk).
+2.  **Generic Description:** Save the raw user text to `food_description` without modification.
+3.  **Human Flag:** Set a `requires_review` flag on the `tasks` row for Replate Admins.
 
-## 4. Haversine Geo-Logic
-The distance calculation is performed in the `client/api.py` (when using Supabase) or the `dummy_backend` (when in mock mode) using the Haversine formula to rank tasks.
+## 4. Data Privacy & Retention (PII)
+
+### 4.1 donor_whatsapp_id
+*   **Classification:** This field is considered **Personally Identifiable Information (PII)**.
+*   **Retention Policy:** The `donor_whatsapp_id` is retained for **30 days** following task completion to allow for dispute resolution. After 30 days, a background worker masks this field (e.g., `whatsapp_user_masked`).
+
+## 5. Database Schema Enhancements (V1)
+
+### 5.1 Tasks Table
+*   `category`: TEXT (Check constraint enforced).
+*   `quantity_lb`: NUMERIC (Standardized unit).
+*   `address_json`: Stores geo-coordinates and human-readable address.
+
+### 5.2 Fixture Reconciliation
+To maintain consistency between legacy and Supabase modes, `quantity_lb` is calculated as:
+`quantity_lb = tray_count * multiplier` (where multiplier is based on `tray_type`).
+*   `full`: 15 lbs
+*   `half`: 7 lbs
+*   `small`: 3 lbs
+
+## 6. Security & Identity Status
+*   **Simulated Auth:** V1 uses manual lookups in `drivers` by email for rapid prototyping.
+*   **Production Path:** V2 will migrate to `supabase.auth` and signed JWTs.
