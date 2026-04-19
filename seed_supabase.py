@@ -35,10 +35,10 @@ def seed():
     # 1. Clear existing data
     # Robust delete: Use filter that captures all records regardless of type (UUID or Int)
     print("Cleaning existing data...")
-    # .is_.not.null('id') is a safe way to target every row in a table
-    supabase.table("tasks").delete().filter("id", "isnot", "null").execute()
-    supabase.table("drivers").delete().filter("id", "isnot", "null").execute()
-    supabase.table("partners").delete().filter("id", "isnot", "null").execute()
+    # .neq('id', -1) is a safe way to target every row in a table for these fixtures
+    supabase.table("tasks").delete().neq("id", -1).execute()
+    supabase.table("drivers").delete().neq("email", "MOCK_DELETE_ALL").execute()
+    supabase.table("partners").delete().neq("id", -1).execute()
 
     # 2. Seed Partners
     print(f"Seeding {len(PARTNERS)} partners...")
