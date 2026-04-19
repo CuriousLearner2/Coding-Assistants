@@ -15,8 +15,8 @@ ADD COLUMN IF NOT EXISTS requires_review BOOLEAN DEFAULT false;
 -- 3. Enable RLS (Security)
 ALTER TABLE whatsapp_sessions ENABLE ROW LEVEL SECURITY;
 
--- 4. Allow public access to sessions (Only for the Edge Function / Admin key)
-CREATE POLICY "Admin All Access" ON whatsapp_sessions FOR ALL USING (true);
+-- 4. Allow access to sessions (Only for the Edge Function via Service Role)
+CREATE POLICY "Service Role Only" ON whatsapp_sessions FOR ALL TO service_role USING (auth.role() = 'service_role');
 
 -- 5. Index for TTL performance
 CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_updated_at ON whatsapp_sessions(updated_at);
