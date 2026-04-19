@@ -61,27 +61,30 @@ async function sendWhatsApp(to: string, body: string) {
   }
 }
 
-async function extractWithGemini(text: string, retries = 3) {
-  const prompt = `Return ONLY JSON: {
-    "categories": ["List all that apply from: Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry"], 
-    "quantity_lb": number, 
-    "food_description": "short summary",
-    "item_list": "bulleted list of all items",
-    "requires_review": boolean
-  }. Input: "${text}"`
+async function extractWithGemini(text: string, model_name = "gemini-flash-latest", retries = 5) {
+  let prompt = text
+  if (!text.includes("{") && !text.toLowerCase().includes("window")) {
+    prompt = `Return ONLY JSON: {
+      "categories": ["List all that apply: Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry"], 
+      "quantity_lb": number, 
+      "food_description": "short summary",
+      "item_list": "bulleted list of all items",
+      "requires_review": boolean
+    }. Input: "${text}"`
+  }
   
   for (let i = 0; i < retries; i++) {
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model_name}:generateContent?key=${GEMINI_API_KEY}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
       })
       
       if (!res.ok) {
-        if (res.status === 429) {
-          const delay = Math.pow(2, i) * 1000
-          console.warn(`Gemini Rate Limit (429). Retrying in ${delay}ms...`)
+        if (res.status === 429 || res.status === 503) {
+          const delay = Math.pow(2, i) * 2000 // Patient backoff
+          console.warn(`Gemini Error (${res.status}). Retrying in ${delay}ms...`)
           await new Promise(resolve => setTimeout(resolve, delay))
           continue
         }
@@ -93,8 +96,12 @@ async function extractWithGemini(text: string, retries = 3) {
       return JSON.parse(rawText.replace(/```json|```/g, "").trim())
     } catch (e) {
       if (i === retries - 1) {
+        if (model_name === "gemini-flash-latest") {
+           console.warn("Flash failed, falling back to Lite...")
+           return extractWithGemini(text, "gemini-flash-lite-latest", 3)
+        }
         console.error("Gemini Final Failure:", e)
-        return { category: "Pantry", quantity_lb: 5, food_description: text.slice(0, 50), requires_review: true }
+        return null // Caller handles fallback to mock/previous data
       }
     }
   }
@@ -190,7 +197,11 @@ serve(async (req) => {
     // ── State Machine ────────────────────────────────────────────────────────
 
     if (session.state === "AWAITING_DESC") {
-      const details = await extractWithGemini(text)
+      let details = await extractWithGemini(text)
+      if (!details) {
+         // Final Fallback: Simple extraction
+         details = { categories: ["Pantry"], quantity_lb: 5, food_description: text.slice(0,30), item_list: `- ${text}`, requires_review: true }
+      }
       const newData = { ...session.temp_data, ...details }
       
       await supabase.table("whatsapp_sessions").update({
@@ -207,22 +218,23 @@ serve(async (req) => {
         await sendWhatsApp(phone, "Great! When is the latest we can pick this up? (e.g. 'Until 5pm today')")
       } else {
         const prompt = `Current data: ${JSON.stringify(session.temp_data)}. Update it based on: "${text}". Return updated JSON.`
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        })
-        const data = await res.json()
-        const updated = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, "").trim())
-        const newData = { ...session.temp_data, ...updated }
+        const updated = await extractWithGemini(prompt)
         
-        await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
-        const cats = newData.categories.join(", ")
-        await sendWhatsApp(phone, `Updated! How about now?\n\n📋 *Items:* ${newData.item_list}\n📦 *Categories:* ${cats}\n⚖️ *Est. Weight:* ${newData.quantity_lb} lbs\n\nReply 'Yes' to confirm or tell me what else to change.`)
+        if (updated) {
+          const newData = { ...session.temp_data, ...updated }
+          await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
+          const cats = newData.categories.join(", ")
+          await sendWhatsApp(phone, `Updated! How about now?\n\n📋 *Items:* ${newData.item_list}\n📦 *Categories:* ${cats}\n⚖️ *Est. Weight:* ${newData.quantity_lb} lbs\n\nReply 'Yes' to confirm or tell me what else to change.`)
+        } else {
+          await sendWhatsApp(phone, "Sorry, I'm having trouble updating that. Does the summary look okay now? (Reply 'Yes' or try describing the change again)")
+        }
       }
     }
     else if (session.state === "AWAITING_WINDOW") {
-      const window = await extractWindowWithGemini(text)
+      const today = new Date().toISOString().split('T')[0]
+      const prompt = `Today is ${today}. Extract date and end time from: "${text}". Return ONLY JSON: {"date": "YYYY-MM-DD", "end_time": "HH:MM"}`
+      const window = await extractWithGemini(prompt) || { date: today, end_time: "17:00" }
+      
       const newData = { ...session.temp_data, ...window }
       
       await supabase.table("whatsapp_sessions").update({
@@ -260,17 +272,15 @@ serve(async (req) => {
       } else {
         const today = new Date().toISOString().split('T')[0]
         const prompt = `Today is ${today}. Current window: ${session.temp_data.date} ${session.temp_data.end_time}. Update based on: "${text}". Return JSON: {"date": "YYYY-MM-DD", "end_time": "HH:MM"}`
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        })
-        const data = await res.json()
-        const updated = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, "").trim())
-        const newData = { ...session.temp_data, ...updated }
-        
-        await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
-        await sendWhatsApp(phone, `Updated! How about now?\n\n📅 *Date:* ${newData.date}\n🕒 *Latest Pickup:* ${newData.end_time}\n\nReply 'Yes' to confirm or tell me what else to change.`)
+        const updated = await extractWithGemini(prompt)
+
+        if (updated) {
+          const newData = { ...session.temp_data, ...updated }
+          await supabase.table("whatsapp_sessions").update({ temp_data: newData }).eq("phone_number", phone)
+          await sendWhatsApp(phone, `Updated! How about now?\n\n📅 *Date:* ${newData.date}\n🕒 *Latest Pickup:* ${newData.end_time}\n\nReply 'Yes' to confirm or tell me what else to change.`)
+        } else {
+          await sendWhatsApp(phone, "Sorry, I'm having trouble updating the time. Is the current time okay? (Reply 'Yes' or try again)")
+        }
       }
     }
     else if (session.state === "COMPLETED") {

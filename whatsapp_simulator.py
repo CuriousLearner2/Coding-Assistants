@@ -51,25 +51,30 @@ def extract_donation_details_mock(text: str):
     }
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=20),
     retry=retry_if_exception_type(Exception),
     reraise=True
 )
-def _call_gemini_api(text: str):
-    prompt = f"""
-    Return ONLY a JSON object:
-    {{
-      "categories": ["List all that apply: Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry"],
-      "quantity_lb": estimated total weight in lbs (number),
-      "food_description": "2-3 word summary",
-      "item_list": "A bulleted list of everything mentioned"
-    }}
-    Input: "{text}"
-    """
+def _call_gemini_api(text: str, model_name: str = 'gemini-flash-latest'):
+    if "window" in text.lower() or "current data" in text.lower():
+        # This is a correction or window parse
+        prompt = text
+    else:
+        # This is a fresh description
+        prompt = f"""
+        Return ONLY a JSON object:
+        {{
+          "categories": ["List all that apply: Prepared Meals, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry"],
+          "quantity_lb": estimated total weight in lbs (number),
+          "food_description": "2-3 word summary",
+          "item_list": "A bulleted list of everything mentioned"
+        }}
+        Input: "{text}"
+        """
     
     response = client.models.generate_content(
-        model='gemini-flash-latest',
+        model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type='application/json',
@@ -83,23 +88,23 @@ def extract_donation_details(text: str):
         return extract_donation_details_mock(text)
 
     try:
-        details = _call_gemini_api(text)
-        # Ensure it's a dict, not a list
-        if isinstance(details, list) and len(details) > 0:
-            details = details[0]
-        if not isinstance(details, dict):
-            raise ValueError(f"AI returned {type(details)} instead of dict")
-        return details
+        # Try Primary Flash Model
+        return _call_gemini_api(text, 'gemini-flash-latest')
     except Exception as e:
-        print(f"  [GEMINI ERROR] {e} - Falling back to local mock.")
-        return extract_donation_details_mock(text)
+        print(f"  [FLASH ERROR] {e} - Trying Lite fallback...")
+        try:
+            # Try Lite Model (Higher capacity)
+            return _call_gemini_api(text, 'gemini-flash-lite-latest')
+        except Exception as e2:
+            print(f"  [LITE ERROR] {e2} - Falling back to local mock.")
+            return extract_donation_details_mock(text)
 
 def extract_window_details(text: str):
     """Use AI to parse natural language dates/times."""
     today = date.today().isoformat()
     prompt = f"""
     Today is {today}.
-    Extract the pickup date and end time from this user input: "{text}"
+    Extract the pickup date and end time from this window input: "{text}"
     Return ONLY a JSON object:
     {{
       "date": "YYYY-MM-DD",
@@ -107,16 +112,7 @@ def extract_window_details(text: str):
       "explanation": "short reason"
     }}
     """
-    try:
-        response = client.models.generate_content(
-            model='gemini-flash-latest',
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type='application/json'),
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"  [WINDOW AI ERROR] {e}")
-        return {"date": today, "end_time": "17:00", "explanation": "Fallback to today 5pm"}
+    return extract_donation_details(prompt) # Use the unified extractor
 
 # ── State Machine Logic ────────────────────────────────────────────────────────
 
