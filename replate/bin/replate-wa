@@ -1,4 +1,4 @@
 #!/bin/bash
-PROJECT_ROOT="/Users/gautambiswas/Gemini Code/replate/replate"
+PROJECT_ROOT="/Users/gautambiswas/Claude Code/replate/replate"
 cd "$PROJECT_ROOT"
 "$PROJECT_ROOT/venv/bin/python" whatsapp_simulator.py "$@"

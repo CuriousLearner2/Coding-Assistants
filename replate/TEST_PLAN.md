@@ -33,11 +33,10 @@ replate/
 
 ## 2. Test Strategy
 
-### 2.1 Supabase Integration Testing
-Tests targeting the remote Supabase instance must:
-1.  Verify authentication using the `alice_session` fixture.
-2.  Validate that CRUD operations on `tasks` and `drivers` correctly reflect in the remote tables.
-3.  Ensure RLS policies prevent unauthorized data access.
+### 2.1 Backend Targeting
+The project supports two testing modes via fixtures:
+1. **Mock Backend (Standard):** Most integration tests in `tests/integration/` target the local Flask mock server. This is the default when running `pytest`.
+2. **Supabase Integration (Cloud):** Critical auth and logistics logic can be validated against the live Supabase instance using the specialized fixtures in `tests/conftest_supabase.py`.
 
 ### 2.2 Input Mocking
 Since the CLI relies on terminal interaction, all E2E and integration tests must use the `MockInput` utility to simulate user keystrokes and prevent `getpass` from hanging the test runner.
@@ -64,9 +63,10 @@ To manually verify the full logistics loop, use the integrated CLI tools:
 ## 5. Automated Tests
 Run the test suite using `pytest`:
 ```bash
-# Test against Supabase (requires valid .env)
-pytest tests/integration/test_auth_flows.py -p tests.conftest_supabase
-
-# Test against legacy mock (deprecated)
+# 1. Standard Mock Tests
 pytest
+
+# 2. Supabase Integration (requires valid .env)
+# The -p flag loads the Supabase conftest plugin
+pytest tests/integration/test_auth_flows.py -p tests.conftest_supabase
 ```

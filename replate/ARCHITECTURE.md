@@ -13,19 +13,22 @@
 
 ## 2. WhatsApp Multi-Turn Logic
 
-### 2.1 State Machine (Simplified V1)
-The system uses a 3-turn conversational flow. High-level states are listed below. For the full state-transition diagram and special command handling (RESET/STOP), refer to `TECH_DESIGN_WHATSAPP_V1.md`.
+### 2.1 State Machine (V1 Implementation)
+The system uses a 5-turn conversational flow (6 states) to ensure data accuracy through user confirmation.
 
 | State | Action | Next State |
 |-------|--------|------------|
-| `START` | Greet donor, ask for food description. | `AWAITING_DESC` |
-| `AWAITING_DESC` | Extract Category & Qty using Gemini Pro, ask for pickup window. | `AWAITING_WINDOW` |
-| `AWAITING_WINDOW` | Inject Task into Supabase, send confirmation. | `COMPLETED` |
-| `COMPLETED` | Terminal state; wait for 'NEW' to restart. | `START` (on trigger) |
+| `START` (Implicit) | Greet donor, ask for food description. | `AWAITING_DESC` |
+| `AWAITING_DESC` | Extract Category & Qty using Gemini Pro, ask for review. | `AWAITING_REVIEW` |
+| `AWAITING_REVIEW` | Process confirmation or correction of details. | `AWAITING_WINDOW` (on 'Yes') |
+| `AWAITING_WINDOW` | Parse pickup window using Gemini, ask for review. | `AWAITING_WINDOW_REVIEW` |
+| `AWAITING_WINDOW_REVIEW` | Process confirmation or correction of window. | `COMPLETED` (on 'Yes') |
+| `COMPLETED` | Terminal state; wait for 'NEW' to restart. | `AWAITING_DESC` (on trigger) |
 
-### 2.2 Session Expiry (TTL)
-*   **Policy:** WhatsApp sessions expire **24 hours** after the last interaction.
-*   **Implementation:** A PostgreSQL Cron job (or Supabase scheduled function) deletes rows in `whatsapp_sessions` where `updated_at < now() - interval '24 hours'`.
+### 2.2 Session Expiry (TTL) - PLANNED
+*   **Policy:** WhatsApp sessions should expire **24 hours** after the last interaction.
+*   **Status:** Not currently implemented in the codebase.
+*   **Proposed Implementation:** A PostgreSQL Cron job (or Supabase scheduled function) to delete rows in `whatsapp_sessions` where `updated_at < now() - interval '24 hours'`.
 
 ### 2.4 Logistics Notifications (Webhooks)
 The system uses Database Webhooks to trigger real-time WhatsApp alerts for critical logistical changes:
@@ -40,9 +43,12 @@ The system uses Database Webhooks to trigger real-time WhatsApp alerts for criti
 ## 3. Intelligence & Fallbacks (Gemini)
 
 ### 3.1 Extraction Logic
-The system uses Gemini Pro to transform unstructured text into:
-*   `category`: One of [Prepared, Produce, Bakery, Dairy, Meat, Pantry].
-*   `quantity_lb`: Numeric estimate.
+The system uses Gemini Pro to transform unstructured text into 5 structured fields:
+*   `categories`: Array of labels (Prepared, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry).
+*   `quantity_lb`: Numeric estimate in lbs.
+*   `food_description`: Short text summary.
+*   `item_list`: Detailed bulleted list.
+*   `requires_review`: Boolean flag for high-ambiguity cases.
 
 ### 3.2 Fallback Strategy
 If Gemini returns low-confidence scores, fails to parse, or the API is unavailable:

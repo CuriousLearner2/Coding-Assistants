@@ -32,40 +32,37 @@ This document details the technical implementation of the automated food donatio
 
 | State | User Input | AI Action | Bot Response |
 |-------|------------|-----------|--------------|
-| `START` | "I have food" | None | "Thanks! What kind of food do you have?" |
-| `AWAITING_DESC` | "3 trays of pasta" | Extract Category & Qty | "Got it. When is the latest we can pick this up?" |
-| `AWAITING_WINDOW` | "Until 5pm today" | Parse Time & Inject Task | "Confirmed! A volunteer will be notified." |
+| `START` (Implicit) | "NEW" / "START" | None | "Thanks! What kind of food do you have?" |
+| `AWAITING_DESC` | "3 trays of pasta" | Extract Details | Summary of items, categories, and weight. "Does this look correct?" |
+| `AWAITING_REVIEW` | "Yes" or correction | Re-extract (if needed) | "Great! When is the latest we can pick this up?" |
+| `AWAITING_WINDOW` | "Until 5pm today" | Parse Window | Summary of date and time. "Does this work?" |
+| `AWAITING_WINDOW_REVIEW` | "Yes" or correction | Re-parse (if needed) | "Success! Your donation is live. Thank you!" |
 | `COMPLETED` | Any text | None | "Your donation is logged. Type 'NEW' to start another." |
 
 ### 4.1 Special Commands & Unexpected Input
-* **"RESET" / "NEW":** Immediately resets the session state to `START` and clears `temp_data`.
+* **"RESET" / "NEW":** Immediately resets the session state to `AWAITING_DESC` and clears `temp_data`.
 * **"STOP" / "CANCEL":** Deletes the row from `whatsapp_sessions` and stops the flow.
 * **Media/Images:** If an image is sent during `AWAITING_DESC`, the bot replies: *"I can't see images yet! Please type a short description of the food."* (Native photo support deferred to V2).
-* **Gibberish/Unknown:** If the LLM extraction in `AWAITING_DESC` returns a confidence score below a threshold, the bot asks the user to clarify instead of advancing the state.
 
 ## 5. Intelligence Strategy (Gemini Pro)
 
 ### 5.1 System Prompt
-```text
-You are a logistics coordinator for Replate. 
-Extract the following from the user's food description:
-1. Category: [Prepared, Produce, Bakery, Dairy, Meat, Pantry]
-2. Quantity_LB: Estimated weight in pounds.
-3. Description: A clean version of the user's text.
-
-Input: "I have 2 large boxes of leftover donuts"
-Output: {"category": "Bakery", "quantity_lb": 10, "description": "2 boxes of donuts"}
-```
+The system extracts 5 structured fields from unstructured text to minimize donor friction:
+1. `categories`: Array of matching labels (Prepared, Produce, Bakery, Dairy, Meat/Protein, Beverage, Pantry).
+2. `quantity_lb`: Estimated total weight in pounds.
+3. `food_description`: 2-3 word high-level summary.
+4. `item_list`: Bulleted list of all mentioned items.
+5. `requires_review`: Boolean flag for high-ambiguity descriptions.
 
 ### 5.2 Fallbacks
-* **Low Confidence:** If the LLM cannot determine a category, the system defaults to `Pantry` and sets `requires_review = TRUE`.
-* **API Failure:** The raw text is saved to `food_description`, and the donor is allowed to proceed to ensure the lead is not lost.
+* **Extraction Failure:** If Gemini cannot parse the description, the system uses a local regex-based fallback to assign `Pantry` (5 lbs) and sets `requires_review = TRUE`.
+* **Correction Logic:** Users can correct the AI by typing a free-form message (e.g., "Actually it's 50 lbs"). The system uses Gemini to "update" the existing JSON state based on this new input.
 
 ## 6. Security & Privacy
 
 ### 6.1 Webhook Verification
-* **Signature Check:** The Edge Function will validate the `X-Hub-Signature-256` using the `WHATSAPP_APP_SECRET`.
-* **PII Retention:** A PostgreSQL Cron job will run every 24 hours:
+* **Signature Check:** The Edge Function validates the `X-Hub-Signature-256` header if `WHATSAPP_APP_SECRET` is configured in the environment. If the secret is missing, verification is bypassed (for development ease).
+* **PII Retention:** A planned PostgreSQL Cron job will handle session deletion:
   ```sql
   DELETE FROM whatsapp_sessions WHERE updated_at < now() - interval '24 hours';
   ```

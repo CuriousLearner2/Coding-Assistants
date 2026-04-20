@@ -5,7 +5,7 @@ A terminal-based application for food rescue volunteer drivers.
 ## Getting Started
 
 ### 1. Prerequisites
-* Python 3.14+
+* Python 3.11+
 * A Supabase account (free tier)
 
 ### 2. Installation
@@ -18,7 +18,7 @@ pip install -r requirements.txt
 The project now uses **Supabase** as its primary backend.
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Run the SQL schema provided in `seed_supabase.py` (see comments for the SQL block) in the Supabase SQL Editor.
+2. Run the SQL schema provided in `replate/setup_whatsapp_db.sql` in the Supabase SQL Editor.
 3. Copy your project credentials into a `.env` file in the project root:
    ```text
    REPLATE_BACKEND=supabase
@@ -37,7 +37,7 @@ The project includes a `bin` directory for easy invocation from any directory.
 **Setup (One-time):**
 ```bash
 # Add to your PATH
-echo 'export PATH="/Users/gautambiswas/Gemini Code/replate/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="/Users/gautambiswas/Claude Code/replate/replate/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
