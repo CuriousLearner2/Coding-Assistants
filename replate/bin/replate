@@ -1,4 +1,0 @@
-#!/bin/bash
-PROJECT_ROOT="/Users/gautambiswas/Claude Code/replate/replate"
-cd "$PROJECT_ROOT"
-"$PROJECT_ROOT/venv/bin/python" main.py "$@"
