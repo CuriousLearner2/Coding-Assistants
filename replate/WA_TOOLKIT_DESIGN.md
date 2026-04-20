@@ -28,73 +28,60 @@ Responsible for persistence. It assumes a specific PostgreSQL schema in Supabase
 
 **Implementation Details:**
 - **Storage**: Supabase `JSONB` for `temp_data` to allow arbitrary key-value storage per project.
-- **Atomicity**: Uses standard Supabase `.upsert()` and `.update()` calls.
+- **Consistency**: To prevent inconsistent states during process failures, the toolkit MUST perform a single write operation when updating both state and data.
 - **Methods**:
     - `get(phone)`: Returns a `dict` representing the session.
-    - `create(phone, state)`: Initializes a session.
-    - `update(phone, state, data)`: The primary method used by the `StateMachine` to persist handler results.
+    - `create(phone, state)`: Initializes a session using `.upsert()`.
+    - `update(phone, state, data)`: Persists both `state` and `temp_data` in a single `.update()` call to ensure transactional consistency.
 
 ### 3.2 StateMachine (`state_machine.py`)
 The orchestrator. It manages the lifecycle of a message from arrival to reply.
 
 **Key Features:**
 - **Command Interception**: Intercepts "system" commands (`RESET`, `STOP`, `NEW`) before they reach domain handlers.
-- **Robust Error Handling**: Wraps handler execution in `try/except`.
-- **Stateless Dispatch**: Handlers are looked up by the `state` string retrieved from the `SessionManager`.
-
-**Signature:**
-```python
-def handle(self, phone: str, message: Any) -> str:
-    """
-    1. Fetch session from SessionManager.
-    2. Check for Global Commands (RESET, STOP, etc).
-    3. Resolve current handler based on session state.
-    4. Execute handler(phone, message, temp_data).
-    5. Persist next_state and updated_data.
-    6. Return response string.
-    """
-```
+- **Robust Error Handling**: Wraps handler execution in `try/except` to prevent bot crashes.
+- **V1 Media Readiness**: The `handle(phone, message)` signature accepts `Any` for the message to remain forward-compatible with V2 rich-media objects.
 
 ### 3.3 AIExtractor (`ai_extractor.py`)
 A wrapper around the Google GenAI SDK (Gemini) with built-in resilience.
 
 **Robustness Strategy:**
 - **Exponential Backoff**: 5 retries starting at 4s.
-- **Model Fallback**: If `gemini-flash-latest` fails (quota/errors), it automatically tries `gemini-flash-lite-latest`.
-- **Offline Mode**: If `MOCK_AI=true`, it skips the API and calls a project-provided `mock_fn`. This is essential for CI/CD and local development.
+- **Model Fallback**: Automatically switches from `gemini-flash-latest` to `gemini-flash-lite-latest` on failure.
+- **Offline Mode**: If `MOCK_AI=true`, it skips the API and calls a project-provided `mock_fn`.
 
 ### 3.4 Simulator (`simulator.py`)
-A REPL-based interface for rapid prototyping.
+A REPL-based interface for rapid local testing.
 
 **Features:**
-- Uses `argparse` to allow overriding the phone number via `--phone`.
-- Simulates the "Bot Response" delay and formatting.
+- Provides a clean loop for donor-bot interaction.
+- Allows overriding the phone number via `--phone` for testing multi-session logic.
 
 ## 4. Error Handling & Exceptions (`errors.py`)
-The toolkit defines a hierarchy of exceptions to ensure specific failures can be handled gracefully:
+The toolkit defines a hierarchy of exceptions:
 
 - `WAToolkitError`: Base class.
 - `AIExtractionError`: Failed after all retries and fallbacks.
 - `SessionError`: Database connection or schema mismatch issues.
 - `StateNotFoundError`: Attempted to transition to a state with no registered handler.
 
-## 5. Data Flow (Sequence Diagram)
+## 5. Engineering Standards (Requirements)
 
-1.  **Incoming Message**: `StateMachine.handle("+1415...", "I have bread")`
-2.  **Session Lookup**: `SessionManager.get("+1415...")` -> returns `{state: 'AWAITING_DESC', data: {}}`
-3.  **Dispatch**: Calls `registered_handlers['AWAITING_DESC']`
-4.  **AI Extraction**: Handler calls `AIExtractor.extract(prompt, schema)`
-5.  **State Update**: Handler returns `("Does this look right?", "AWAITING_REVIEW", {"items": ["bread"]})`
-6.  **Persistence**: `SessionManager.update("+1415...", "AWAITING_REVIEW", {"items": ["bread"]})`
-7.  **Reply**: User receives "Does this look right?"
-
-## 6. Engineering Standards
-
+- **Pinned Dependencies**: The implementation MUST include a `requirements.txt` that pins `supabase` and `google-genai` to specific versions to prevent breaking changes in host projects.
 - **Type Safety**: Use Python type hints (`typing`) for all method signatures.
-- **Explicit Versioning**: All internal dependencies (Supabase, Google GenAI) are pinned in `requirements.txt`.
-- **Environment Driven**: Secrets (API Keys) are NEVER hardcoded; always retrieved via `os.environ`.
+- **Stateless Handlers**: Handlers MUST remain pure functions; they do not manage persistence.
+- **Graceful Degradation**: Failed AI extractions must return a valid JSON object with `requires_review: true` instead of raising unhandled exceptions to the StateMachine.
 
-## 7. V2 Future Proofing
+## 6. Testing Strategy
 
-- **Adapter Pattern**: The `StateMachine` will be updated to accept a `Message` object instead of a `str` to support multi-media inputs (images/audio).
-- **Storage Adapters**: Interface-based `SessionManager` to support Redis or In-Memory storage for testing.
+The toolkit itself must be validated independently of the projects using it:
+
+1.  **Unit Tests (`StateMachine`)**: Verify command interception and handler routing using mock handlers and a mock SessionManager.
+2.  **Mock Integration (`SessionManager`)**: Test session CRUD operations against a mock Supabase client to ensure single-write consistency.
+3.  **Resilience Tests (`AIExtractor`)**: Force API failures to verify that exponential backoff and model fallback trigger correctly.
+4.  **REPL Verification**: Ensure the simulator correctly terminates on `EXIT` and handles `KeyboardInterrupt`.
+
+## 7. Roadmap / V2
+
+- **Rich Media**: Implementation of a `Message` object to parse image URLs and voice notes.
+- **Storage Adapters**: Interface-based persistence to support Redis or In-Memory storage.
