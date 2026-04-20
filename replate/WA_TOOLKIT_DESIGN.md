@@ -23,7 +23,21 @@ graph TD
 
 ## 3. Core Components
 
+### 3.0 Package Structure
+The toolkit is organized as a modular Python package:
+
+```text
+wa_toolkit/
+├── __init__.py        # Package entry point
+├── session.py         # SessionManager (Supabase persistence)
+├── state_machine.py   # StateMachine (Orchestration & Dispatch)
+├── ai_extractor.py    # AIExtractor (Gemini with resilience)
+├── simulator.py       # Simulator (Local REPL)
+└── errors.py          # Exception hierarchy
+```
+
 ### 3.1 SessionManager (`session.py`)
+**Base Class**: `SessionManager`
 Responsible for persistence. It assumes a specific PostgreSQL schema in Supabase but allows for a custom table name.
 
 **Implementation Details:**
