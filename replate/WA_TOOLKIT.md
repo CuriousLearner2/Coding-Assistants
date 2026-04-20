@@ -26,7 +26,8 @@ wa_toolkit/
 ├── session.py        # Supabase-backed session manager
 ├── state_machine.py  # State router and handler registry
 ├── ai_extractor.py   # LLM call + retry + mock toggle
-└── simulator.py      # Local REPL harness
+├── simulator.py      # Local REPL harness
+└── errors.py         # Standardized error classes (V1 Insight)
 ```
 
 Each project that uses `wa_toolkit` only writes:
@@ -103,14 +104,19 @@ class StateMachine:
         If updated_data has no changes, pass temp_data back unchanged.
         """
 
-    def handle(self, phone: str, message: str) -> str:
+    def handle(self, phone: str, message: Any) -> str:
         """
         Dispatch the message to the correct handler based on session state.
         Returns the reply string to send back to the user.
+
+        V1 Insight: Now accepts 'Any' for message to support future V2 Media objects.
+        If message is a string, it is treated as text. 
+        If it's a dict/object, it is passed to handlers to extract URLs/MIME types.
         """
-```
 
 **Global commands** (STOP, CANCEL, RESET, NEW, START) are intercepted before dispatch and handled uniformly. Projects can override the responses for these commands at construction time.
+
+**Robustness Insight (V1):** The `handle` method now includes a try/except wrapper. If a handler throws an exception, the `StateMachine` catches it, logs the error, and returns a project-configurable "Technical Error" message, preventing the bot from hanging.
 
 **Example usage:**
 
@@ -224,6 +230,22 @@ if __name__ == "__main__":
 ```
 
 The REPL is identical across all projects. The only thing that changes is `handle_fn`.
+
+---
+
+## Engineering Standards
+
+1. **Dependency Stability**: `wa_toolkit` pins its dependencies (like `supabase-py` and `google-genai`) to specific versions to ensure that host projects don't face breaking changes during upstream updates.
+2. **Stateless Handlers**: Handlers MUST remain pure functions of `(phone, message, data)`. They should not manage database connections or persistence directly; that is the role of the `StateMachine` and `SessionManager`.
+3. **Graceful Degradation**: If the AI extraction fails all retries and fallback models, it must return a valid JSON object with the `requires_review` flag set to `true`, rather than crashing.
+
+---
+
+## Roadmap / V2
+
+- **Media Support**: Expand the `message` object to handle WhatsApp images, documents, and voice notes.
+- **Provider Agnostic**: Support for Twilio and Meta Cloud API through a unified `MessageAdapter`.
+- **Advanced State Persistence**: Support for Redis as a faster alternative to Supabase for high-concurrency bots.
 
 ---
 
