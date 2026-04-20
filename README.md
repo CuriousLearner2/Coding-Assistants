@@ -32,9 +32,27 @@ The project now uses **Supabase** as its primary backend.
    ```
 
 ### 4. Running the App
+The project includes a `bin` directory for easy invocation from any directory. 
+
+**Setup (One-time):**
 ```bash
-python main.py
+# Add to your PATH
+echo 'export PATH="/Users/gautambiswas/Gemini Code/replate/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
 ```
+
+**Commands:**
+*   **`replate`**: Launches the main volunteer driver CLI.
+*   **`replate-wa`**: Launches the WhatsApp Simulator to report new food donations.
+
+---
+
+## 🔄 End-to-End Workflow
+
+1.  **Report Food**: Run `replate-wa`. Type `NEW` and follow the prompts to create a task.
+2.  **Get Alerted**: If configured, the admin receives a WhatsApp notification when the task is claimed or rescued.
+3.  **Claim Task**: Run `replate`. Log in as `alice@example.com` / `Password1`, browse "Available Pick-ups", and claim the task you just created.
+4.  **Complete Task**: In `replate`, go to "My Tasks" and mark it as completed.
 
 ## ⚠️ Security Disclaimer
 This application is a **functional prototype**. 

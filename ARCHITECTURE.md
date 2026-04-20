@@ -27,8 +27,15 @@ The system uses a 3-turn conversational flow. High-level states are listed below
 *   **Policy:** WhatsApp sessions expire **24 hours** after the last interaction.
 *   **Implementation:** A PostgreSQL Cron job (or Supabase scheduled function) deletes rows in `whatsapp_sessions` where `updated_at < now() - interval '24 hours'`.
 
-### 2.3 Webhook Verification (V1 Requirement)
-Incoming requests from Meta **must** be verified using the `X-Hub-Signature-256` header and the app's `App Secret`. Requests failing verification will be rejected with a 401 Unauthorized before any processing occurs.
+### 2.4 Logistics Notifications (Webhooks)
+The system uses Database Webhooks to trigger real-time WhatsApp alerts for critical logistical changes:
+*   **Source:** PostgreSQL `public.tasks` table.
+*   **Trigger:** `UPDATE` events where `status` changes.
+*   **Destination:** `whatsapp-status-notifications` Edge Function.
+*   **Alerts:**
+    *   **Claimed**: Sent to Admin and Donor.
+    *   **Unclaimed**: Sent to Admin (high priority).
+    *   **Rescued**: Sent to Admin and Donor (gratitude).
 
 ## 3. Intelligence & Fallbacks (Gemini)
 

@@ -1,0 +1,4 @@
+#!/bin/bash
+PROJECT_ROOT="/Users/gautambiswas/Gemini Code/replate"
+cd "$PROJECT_ROOT"
+"$PROJECT_ROOT/venv/bin/python" main.py "$@"

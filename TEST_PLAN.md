@@ -47,12 +47,26 @@ Existing tests for the `dummy_backend` should be maintained to ensure the applic
 
 ---
 
-## 3. Critical Validation Scenarios
+## 4. End-to-End Testing (Simulator Flow)
 
-| Feature | Scenario | Success Criteria |
-|---------|----------|------------------|
-| **Auth** | Login with valid credentials | Session saved to `~/.replate/session.json` |
-| **Claim** | Claim already-claimed task | API returns `ConflictError` |
-| **Tasks** | View Available Pick-ups | List matches remote Supabase `tasks` table |
-| **Donation**| Log weight and NPO | Task status changes to `completed` in Supabase |
-| **Seeding** | Run `seed_supabase.py` | Remote DB is cleared and re-populated |
+To manually verify the full logistics loop, use the integrated CLI tools:
+
+| Step | Command | Input | Expected Outcome |
+|------|---------|-------|------------------|
+| **1. Create** | `replate-wa` | `NEW`, `5 lbs apples`, `Yes`, `5pm today`, `Yes` | Task inserted into `tasks` table. |
+| **2. Notify** | (Automatic) | - | WhatsApp alert sent to `ADMIN_PHONE`. |
+| **3. Claim** | `replate` | Login `alice@example.com`, select Task, `Claim` | `status` changes to `claimed` in DB. |
+| **4. Alert** | (Automatic) | - | WhatsApp alert: "Task claimed" sent to Admin/Donor. |
+| **5. Finish**| `replate` | My Tasks, select Task, `Complete` | `status` changes to `completed` in DB. |
+
+---
+
+## 5. Automated Tests
+Run the test suite using `pytest`:
+```bash
+# Test against Supabase (requires valid .env)
+pytest tests/integration/test_auth_flows.py -p tests.conftest_supabase
+
+# Test against legacy mock (deprecated)
+pytest
+```
