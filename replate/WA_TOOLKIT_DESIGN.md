@@ -79,14 +79,37 @@ The toolkit defines a hierarchy of exceptions:
 - `SessionError`: Database connection or schema mismatch issues.
 - `StateNotFoundError`: Attempted to transition to a state with no registered handler.
 
-## 5. Engineering Standards (Requirements)
+## 5. Configuration & Environment
+The toolkit relies on the following environment variables. Host applications are responsible for loading these (e.g., via `python-dotenv`) before initializing toolkit components.
 
-- **Pinned Dependencies**: The implementation MUST include a `requirements.txt` that pins `supabase` and `google-genai` to specific versions to prevent breaking changes in host projects.
-- **Type Safety**: Use Python type hints (`typing`) for all method signatures.
-- **Stateless Handlers**: Handlers MUST remain pure functions; they do not manage persistence.
-- **Graceful Degradation**: Failed AI extractions must return a valid JSON object with `requires_review: true` instead of raising unhandled exceptions to the StateMachine.
+| Variable | Required | Description |
+|---|---|---|
+| `SUPABASE_URL` | Yes | Project URL for database persistence. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Service key to bypass RLS for session management. |
+| `GEMINI_API_KEY` | Yes | API key for LLM extraction logic. |
+| `MOCK_AI` | No | If "true", enables offline mode for `AIExtractor`. |
 
-## 6. Testing Strategy
+## 6. Engineering Standards (Requirements)
+
+### 6.1 Logging Strategy
+The toolkit MUST NOT use `print()` statements. It will use a named Python logger:
+- **Logger Name**: `wa_toolkit`
+- **Standard**: Host applications can control verbosity via `logging.getLogger("wa_toolkit").setLevel()`.
+- **Key Events**: AI retry attempts, session write failures, and command interceptions MUST be logged at `INFO` or `WARNING` levels.
+
+### 6.2 Handler Interface Specification
+Domain handlers registered with the `StateMachine` MUST adhere to the following contract:
+- **Input**: `(phone: str, message: Any, data: dict)`
+- **Output**: `tuple[str, str, dict]` -> `(reply_text, next_state, updated_data)`
+- **No-Op Logic**: If a handler makes no changes to the data, it should return the original `data` object to avoid redundant DB writes.
+
+### 6.3 Dependency Management
+The toolkit will pin the following core dependencies:
+- `supabase >= 2.11.0`: Database client.
+- `google-genai >= 1.2.0`: LLM integration.
+- `tenacity >= 9.0.0`: Retry logic implementation.
+
+## 7. Testing Strategy
 
 The toolkit itself must be validated independently of the projects using it:
 
