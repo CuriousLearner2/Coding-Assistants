@@ -27,7 +27,7 @@ wa_toolkit/
 ├── state_machine.py  # State router and handler registry
 ├── ai_extractor.py   # LLM call + retry + mock toggle
 ├── simulator.py      # Local REPL harness
-└── errors.py         # Standardized error classes (V1 Insight)
+└── errors.py         # Standardized error classes
 ```
 
 Each project that uses `wa_toolkit` only writes:
@@ -86,6 +86,10 @@ Only the table name is project-specific. The schema stays constant across projec
 
 A simple registry that maps state names to handler functions and dispatches incoming messages.
 
+**Design Insights (V1):**
+*   **Media Readiness**: The `handle` method accepts `Any` for the message parameter. This allows future V2 handlers to process complex objects (containing image URLs or MIME types) while remaining compatible with simple text strings today.
+*   **Robustness**: The `handle` method includes a global `try/except` wrapper. If a domain handler throws an unhandled exception, the StateMachine catches it, logs the trace, and returns a configurable "Technical Error" message to the user, preventing the entire bot process from crashing.
+
 **API:**
 
 ```python
@@ -93,50 +97,34 @@ class StateMachine:
     def __init__(self, session_manager: SessionManager, initial_state: str, welcome_message: str):
         ...
 
-    def register(self, state: str, handler: Callable[[str, str, dict], tuple[str, str, dict]]):
+    def register(self, state: str, handler: Callable[[str, Any, dict], tuple[str, str, dict]]):
         """
         Register a handler for a state.
 
         The handler signature is:
             handler(phone, message, temp_data) -> (reply, next_state, updated_data)
-
-        If next_state is unchanged, pass the current state back.
-        If updated_data has no changes, pass temp_data back unchanged.
         """
 
     def handle(self, phone: str, message: Any) -> str:
         """
         Dispatch the message to the correct handler based on session state.
         Returns the reply string to send back to the user.
-
-        V1 Insight: Now accepts 'Any' for message to support future V2 Media objects.
-        If message is a string, it is treated as text. 
-        If it's a dict/object, it is passed to handlers to extract URLs/MIME types.
         """
+```
 
 **Global commands** (STOP, CANCEL, RESET, NEW, START) are intercepted before dispatch and handled uniformly. Projects can override the responses for these commands at construction time.
 
-**Robustness Insight (V1):** The `handle` method now includes a try/except wrapper. If a handler throws an exception, the `StateMachine` catches it, logs the error, and returns a project-configurable "Technical Error" message, preventing the bot from hanging.
+---
 
-**Example usage:**
+### `errors.py` — Standardized Errors
 
-```python
-sm = StateMachine(
-    session_manager=sessions,
-    initial_state="AWAITING_DESC",
-    welcome_message="👋 Hi! What food do you have today?"
-)
+Provides a consistent exception hierarchy so projects can catch specific toolkit failures.
 
-sm.register("AWAITING_DESC",   handle_description)
-sm.register("AWAITING_REVIEW", handle_review)
-sm.register("AWAITING_WINDOW", handle_window)
-sm.register("COMPLETED",       handle_completed)
-
-# In your webhook or simulator:
-reply = sm.handle(phone, incoming_message)
-```
-
-Each handler only knows about its own state. The router, session reads/writes, and command interception are invisible to it.
+**Key Classes:**
+*   `WAToolkitError`: Base exception for all toolkit-related issues.
+*   `AIExtractionError`: Raised when the LLM fails after all retries and fallback models.
+*   `SessionError`: Raised when database operations fail or the schema is invalid.
+*   `StateNotFoundError`: Raised if the session is in a state with no registered handler.
 
 ---
 
@@ -174,28 +162,6 @@ class AIExtractor:
 - Falls back to `mock_fn` after fallback fails
 - If no `mock_fn` is provided, re-raises the last exception
 
-**Mock toggle:** If the env var named by `mock_env_var` is `"true"`, `extract()` calls `mock_fn` directly without touching the API. This enables offline development and CI without burning quota.
-
-**Example usage:**
-
-```python
-extractor = AIExtractor(
-    api_key=os.environ["GEMINI_API_KEY"],
-    mock_fn=my_regex_fallback,
-)
-
-result = extractor.extract(
-    prompt=f'Extract food details from: "{user_message}"',
-    schema={
-        "item": "string",
-        "quantity": "number",
-        "unit": "string"
-    }
-)
-```
-
-The prompt and schema are entirely project-specific. The retry/fallback machinery is not.
-
 ---
 
 ### `simulator.py` — REPL Harness
@@ -218,24 +184,11 @@ def run(
     """
 ```
 
-**Example usage:**
-
-```python
-# my_bot/simulator.py
-from wa_toolkit.simulator import run
-from my_bot.handler import handle_message
-
-if __name__ == "__main__":
-    run(handle_fn=handle_message, banner="My Bot Simulator")
-```
-
-The REPL is identical across all projects. The only thing that changes is `handle_fn`.
-
 ---
 
 ## Engineering Standards
 
-1. **Dependency Stability**: `wa_toolkit` pins its dependencies (like `supabase-py` and `google-genai`) to specific versions to ensure that host projects don't face breaking changes during upstream updates.
+1. **Dependency Stability**: `wa_toolkit` pins its dependencies (like `supabase-py` and `google-genai`) to specific versions to ensure that host projects (like Replate) don't face breaking changes during upstream updates.
 2. **Stateless Handlers**: Handlers MUST remain pure functions of `(phone, message, data)`. They should not manage database connections or persistence directly; that is the role of the `StateMachine` and `SessionManager`.
 3. **Graceful Degradation**: If the AI extraction fails all retries and fallback models, it must return a valid JSON object with the `requires_review` flag set to `true`, rather than crashing.
 
@@ -302,43 +255,3 @@ sm.register("COMPLETED",       handle_done)
 def handle_message(phone: str, message: str) -> str:
     return sm.handle(phone, message)
 ```
-
-### 5. Test locally
-
-```bash
-MOCK_AI=true python -m my_bot.simulator --phone +14155550001
-```
-
-### 6. Deploy to production
-
-`handle_message` is called from your Supabase Edge Function or any webhook handler. The toolkit has no framework dependency — it works with Deno (via a Python sidecar), FastAPI, Flask, or a bare Lambda.
-
----
-
-## What Each Project Still Owns
-
-| Component | Project-specific |
-|---|---|
-| State names and count | ✅ |
-| Handler logic per state | ✅ |
-| LLM prompts | ✅ |
-| Expected JSON schema | ✅ |
-| Mock/regex fallback | ✅ |
-| Final action (DB insert, API call, etc.) | ✅ |
-| Session table name (optional override) | ✅ |
-| Welcome and command response messages | ✅ |
-
-| Component | Provided by wa_toolkit |
-|---|---|
-| Session CRUD | ✅ |
-| State dispatch | ✅ |
-| STOP / RESET / NEW interception | ✅ |
-| LLM call + retry + fallback | ✅ |
-| Mock toggle via env var | ✅ |
-| REPL simulator loop | ✅ |
-
----
-
-## Relationship to Replate
-
-`wa_toolkit` is extracted directly from `replate/whatsapp_simulator.py`. The Replate project would be refactored to import from `wa_toolkit` rather than implementing these components inline. Its handlers (`handle_description`, `handle_review`, `handle_window`) and Gemini prompts remain in the `replate/` package — only the plumbing moves out.
